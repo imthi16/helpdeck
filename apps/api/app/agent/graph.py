@@ -10,6 +10,7 @@ import re
 import uuid
 from typing import Any
 
+from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 
 from app.agent import prompts
@@ -65,8 +66,22 @@ def parse_confidence(text: str) -> float:
         return 0.0
 
 
+def _emit(event_type: str, **fields: Any) -> None:
+    """Emit a custom stream event when running under a streaming invocation.
+
+    A no-op outside custom streaming (e.g. ainvoke), so nodes stay pure there.
+    """
+    try:
+        writer = get_stream_writer()
+    except RuntimeError:
+        return
+    if writer is not None:
+        writer({"type": event_type, **fields})
+
+
 def build_agent_graph(deps: AgentDependencies, checkpointer: Any = None):
     async def router(state: AgentState) -> AgentState:
+        _emit("status", value="routing")
         response = await deps.gateway.complete(
             [
                 LLMMessage("system", prompts.ROUTER_SYSTEM),
@@ -77,6 +92,7 @@ def build_agent_graph(deps: AgentDependencies, checkpointer: Any = None):
         return {"intent": parse_intent(response.text)}
 
     async def retrieve(state: AgentState) -> AgentState:
+        _emit("status", value="retrieving")
         retriever = HybridRetriever(deps.sessionmaker, deps.embedding_service)
         fused = await retriever.search(
             uuid.UUID(state["org_id"]), state["question"], top_n=max(50, deps.retrieval_top_n)
@@ -89,18 +105,21 @@ def build_agent_graph(deps: AgentDependencies, checkpointer: Any = None):
         chunks = state.get("chunks", [])
         if not chunks:
             return {"answer": prompts.REFUSAL_TEXT, "citations": []}
-        response = await deps.gateway.complete(
-            [
-                LLMMessage("system", prompts.GROUNDED_SYSTEM),
-                LLMMessage("user", prompts.build_answer_prompt(state["question"], chunks)),
-            ],
-            route=LLMRoute.strong,
-        )
-        citations = parse_citations(response.text, chunks)
+        _emit("status", value="generating")
+        messages = [
+            LLMMessage("system", prompts.GROUNDED_SYSTEM),
+            LLMMessage("user", prompts.build_answer_prompt(state["question"], chunks)),
+        ]
+        pieces: list[str] = []
+        async for piece in deps.gateway.stream(messages, route=LLMRoute.strong):
+            pieces.append(piece)
+            _emit("token", value=piece)
+        text = "".join(pieces).strip()
+        citations = parse_citations(text, chunks)
         return {
-            "answer": response.text,
+            "answer": text,
             "citations": citations,
-            "model_used": response.model,
+            "model_used": deps.gateway.model_for(LLMRoute.strong),
         }
 
     async def faithfulness_judge(state: AgentState) -> AgentState:
