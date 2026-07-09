@@ -23,7 +23,7 @@
       *Verify:* `docker compose up -d` → both containers healthy; `psql -c "CREATE EXTENSION IF NOT EXISTS vector;"` succeeds.
 - [x] **0.3 FastAPI skeleton.** `apps/api` with `uv init`; `app/main.py` app factory; `app/core/config.py` (pydantic-settings reading `.env`); `app/core/db.py` (async SQLAlchemy engine/session); structured JSON logging; `GET /health` returning `{status, version}`.
       *Verify:* `uv run uvicorn app.main:app --reload` → `curl localhost:8000/health` returns 200.
-- [ ] **0.4 Alembic wired.** `alembic init`, async env.py, empty baseline migration.
+- [x] **0.4 Alembic wired.** `alembic init`, async env.py, empty baseline migration.
       *Verify:* `uv run alembic upgrade head` runs clean against Compose Postgres.
 - [ ] **0.5 Next.js dashboard skeleton.** `apps/web`: Next.js 16, TypeScript strict, Tailwind, shadcn/ui initialized, placeholder landing page, `lib/api.ts` fetch wrapper pointing at `NEXT_PUBLIC_API_URL`.
       *Verify:* `pnpm dev` renders; `pnpm lint && pnpm typecheck && pnpm build` pass.

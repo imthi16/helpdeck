@@ -3,6 +3,7 @@ name = "helpdeck-api"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
+    "alembic>=1.18.5",
     "asyncpg>=0.31.0",
     "fastapi>=0.139.0",
     "pydantic-settings>=2.14.2",
@@ -25,6 +26,10 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC"]
+
+[tool.ruff.lint.per-file-ignores]
+# Migration template always imports op/sa; empty migrations don't use them.
+"alembic/versions/*" = ["F401"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
