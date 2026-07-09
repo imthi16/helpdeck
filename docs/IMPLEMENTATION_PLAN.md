@@ -42,7 +42,7 @@
 
 **Goal:** documents in, relevant chunks out. No LLM generation yet.
 
-- [ ] **1.1 Core models + migration.** SQLAlchemy models + Alembic migration for: `organizations`, `users`, `memberships (role: owner|admin|agent|viewer)`, `documents (source_type: pdf|url|text, status: pending|processing|ready|failed)`, `chunks (content, embedding vector(1536), content_tsv tsvector, metadata jsonb, token_count)`. Indexes: HNSW on `chunks.embedding` (cosine), GIN on `content_tsv`, composite `(org_id, document_id)`. `content_tsv` maintained by trigger or generated column.
+- [x] **1.1 Core models + migration.** SQLAlchemy models + Alembic migration for: `organizations`, `users`, `memberships (role: owner|admin|agent|viewer)`, `documents (source_type: pdf|url|text, status: pending|processing|ready|failed)`, `chunks (content, embedding vector(1536), content_tsv tsvector, metadata jsonb, token_count)`. Indexes: HNSW on `chunks.embedding` (cosine), GIN on `content_tsv`, composite `(org_id, document_id)`. `content_tsv` maintained by trigger or generated column.
       *Verify:* migration up/down clean; index presence asserted in a test.
 - [ ] **1.2 Extractors.** `app/services/ingestion/extractors.py`: PDF via `pypdf`, URL via `trafilatura` (strip nav/boilerplate), raw text/markdown passthrough. Return text + metadata (title, page numbers/headings).
       *Verify:* unit tests with a fixture PDF, a saved HTML page, and a .md file.
