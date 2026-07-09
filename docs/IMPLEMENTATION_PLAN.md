@@ -44,7 +44,7 @@
 
 - [x] **1.1 Core models + migration.** SQLAlchemy models + Alembic migration for: `organizations`, `users`, `memberships (role: owner|admin|agent|viewer)`, `documents (source_type: pdf|url|text, status: pending|processing|ready|failed)`, `chunks (content, embedding vector(1536), content_tsv tsvector, metadata jsonb, token_count)`. Indexes: HNSW on `chunks.embedding` (cosine), GIN on `content_tsv`, composite `(org_id, document_id)`. `content_tsv` maintained by trigger or generated column.
       *Verify:* migration up/down clean; index presence asserted in a test.
-- [ ] **1.2 Extractors.** `app/services/ingestion/extractors.py`: PDF via `pypdf`, URL via `trafilatura` (strip nav/boilerplate), raw text/markdown passthrough. Return text + metadata (title, page numbers/headings).
+- [x] **1.2 Extractors.** `app/services/ingestion/extractors.py`: PDF via `pypdf`, URL via `trafilatura` (strip nav/boilerplate), raw text/markdown passthrough. Return text + metadata (title, page numbers/headings).
       *Verify:* unit tests with a fixture PDF, a saved HTML page, and a .md file.
 - [ ] **1.3 Chunker.** Heading-aware recursive splitter: target 500–800 tokens, 10–15% overlap, never split mid-sentence, carry heading path into `metadata`. Pure function.
       *Verify:* unit tests — sizes within bounds, overlap correct, headings preserved.
