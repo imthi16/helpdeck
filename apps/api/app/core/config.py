@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     # Dev-only internal routes (e.g. /internal/search). Never enable in prod.
     enable_internal_routes: bool = False
 
+    # Agent thresholds
+    faithfulness_threshold: float = 0.7
+    agent_retrieval_top_n: int = 8
+
     jwt_secret: str = "change-me"
 
     anthropic_api_key: str = ""

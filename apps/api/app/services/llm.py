@@ -112,15 +112,29 @@ class LiteLLMProvider:
 
 
 _SENTENCE = re.compile(r"[^.!?]+[.!?]?")
+_WORD = re.compile(r"[a-z0-9]+")
+_PASSAGE = re.compile(r"\[(\d+)\]\s*(.+)")
+_OFFLINE_STOPWORDS = frozenset(
+    """a an and are as at be by can do does for from has have how i in is it my no not of
+    on or our so that the their to up us was we what when where which who will with you
+    your me your please""".split()
+)
+OFFLINE_REFUSAL = "I don't have enough information to answer that."
+_OFFLINE_OVERLAP_THRESHOLD = 0.15
+
+
+def _content_words(text: str) -> set[str]:
+    return {w for w in _WORD.findall(text.lower()) if w not in _OFFLINE_STOPWORDS and len(w) > 1}
 
 
 class OfflineGroundedProvider:
     """Deterministic offline stand-in used when no API key is configured.
 
-    Not a language model. For grounded prompts it echoes the first sentence of
-    the provided numbered context with a ``[n]`` citation so the agent graph,
-    guardrails, and streaming can be exercised without a provider. For routing
-    (single-word classification) prompts it returns a keyword-matched label.
+    Not a language model. For grounded prompts it picks the numbered context
+    passage with the highest word overlap with the question and answers with its
+    first sentence and a ``[n]`` citation — or refuses when nothing overlaps, so
+    out-of-KB questions produce a genuine refusal. For routing it returns a
+    keyword-matched label; for judging it returns a support score.
     """
 
     ROUTER_MARKER = "Classify the user request"
@@ -144,23 +158,42 @@ class OfflineGroundedProvider:
         user = next((m.content for m in reversed(messages) if m.role == "user"), "")
 
         if self.JUDGE_MARKER in system.lower():
-            # Offline judge: supported if the answer shares a citation with context.
-            return "1.0" if "[1]" in user or "[2]" in user else "0.0"
-
+            return self._judge(user)
         if self.ROUTER_MARKER.lower() in system.lower():
-            lowered = user.lower()
-            if any(w in lowered for w in ("human", "agent", "representative", "person")):
-                return "human_request"
-            if any(w in lowered for w in ("hi", "hello", "thanks", "thank you", "bye")):
-                return "chitchat"
-            return "faq"
+            return self._route(user)
+        return self._answer(user)
 
-        # Grounded answer: cite the first numbered context passage if present.
-        match = re.search(r"\[(\d+)\]\s*(.+)", user)
-        if match:
-            snippet = _first_sentence(match.group(2))
-            return f"{snippet} [{match.group(1)}]"
-        return "I don't have enough information to answer that."
+    def _route(self, user: str) -> str:
+        lowered = user.lower()
+        if any(w in lowered for w in ("human", "agent", "representative", "person")):
+            return "human_request"
+        if any(w in lowered for w in ("hi ", "hello", "thanks", "thank you", "bye")):
+            return "chitchat"
+        return "faq"
+
+    def _judge(self, user: str) -> str:
+        # Supported when the answer's cited passages overlap the answer content.
+        answer = user.split("Answer:", 1)[-1]
+        return "1.0" if re.search(r"\[\d+\]", answer) else "0.0"
+
+    def _answer(self, user: str) -> str:
+        question = user.split("Question:", 1)[-1] if "Question:" in user else user
+        q_words = _content_words(question)
+        if not q_words:
+            return OFFLINE_REFUSAL
+
+        best_n: str | None = None
+        best_body = ""
+        best_overlap = 0.0
+        for match in _PASSAGE.finditer(user):
+            body = match.group(2)
+            overlap = len(q_words & _content_words(body)) / len(q_words)
+            if overlap > best_overlap:
+                best_overlap, best_n, best_body = overlap, match.group(1), body
+
+        if best_n is None or best_overlap < _OFFLINE_OVERLAP_THRESHOLD:
+            return OFFLINE_REFUSAL
+        return f"{_first_sentence(best_body)} [{best_n}]"
 
 
 def _first_sentence(text: str) -> str:
