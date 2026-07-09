@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://helpdeck:helpdeck@localhost:5433/helpdeck"
     redis_url: str = "redis://localhost:6380/0"
 
+    # Local filesystem storage for raw uploaded sources (object store in prod).
+    storage_dir: str = "./storage"
+
     jwt_secret: str = "change-me"
 
     anthropic_api_key: str = ""
