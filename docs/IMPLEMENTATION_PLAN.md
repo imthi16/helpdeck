@@ -21,7 +21,7 @@
       *Verify:* tree matches the layout in `CLAUDE.md`.
 - [x] **0.2 Docker Compose dev infra.** `infra/docker-compose.yml` with `postgres:17` + pgvector extension (use `pgvector/pgvector:pg17` image) and `redis:7`. Healthchecks on both. Named volumes.
       *Verify:* `docker compose up -d` → both containers healthy; `psql -c "CREATE EXTENSION IF NOT EXISTS vector;"` succeeds.
-- [ ] **0.3 FastAPI skeleton.** `apps/api` with `uv init`; `app/main.py` app factory; `app/core/config.py` (pydantic-settings reading `.env`); `app/core/db.py` (async SQLAlchemy engine/session); structured JSON logging; `GET /health` returning `{status, version}`.
+- [x] **0.3 FastAPI skeleton.** `apps/api` with `uv init`; `app/main.py` app factory; `app/core/config.py` (pydantic-settings reading `.env`); `app/core/db.py` (async SQLAlchemy engine/session); structured JSON logging; `GET /health` returning `{status, version}`.
       *Verify:* `uv run uvicorn app.main:app --reload` → `curl localhost:8000/health` returns 200.
 - [ ] **0.4 Alembic wired.** `alembic init`, async env.py, empty baseline migration.
       *Verify:* `uv run alembic upgrade head` runs clean against Compose Postgres.
