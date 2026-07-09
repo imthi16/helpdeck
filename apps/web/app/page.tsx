@@ -1,4 +1,6 @@
-import { Button } from "@/components/ui/button";
+import Link from "next/link";
+
+import { buttonVariants } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -19,10 +21,12 @@ export default function Home() {
           </CardDescription>
         </CardHeader>
         <CardContent className="flex items-center gap-3">
-          <Button disabled>Dashboard coming soon</Button>
-          <span className="text-sm text-muted-foreground">
-            Status: pre-alpha scaffold
-          </span>
+          <Link href="/signup" className={buttonVariants()}>
+            Get started
+          </Link>
+          <Link href="/login" className={buttonVariants({ variant: "outline" })}>
+            Log in
+          </Link>
         </CardContent>
       </Card>
     </main>
