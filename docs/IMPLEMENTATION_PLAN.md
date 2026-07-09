@@ -90,7 +90,7 @@
       *Verify:* pytest — signup/login/refresh flows, wrong-password and expired-token cases.
 - [x] **3.2 Web auth pages + session.** `/signup`, `/login`, middleware-protected `(dashboard)` route group, `useSession` helper, logout.
       *Verify:* manual flow + Playwright smoke: signup → land on dashboard → refresh keeps session.
-- [ ] **3.3 App shell.** Sidebar (Knowledge Base, Playground, Conversations, Analytics-stub, Settings-stub), topbar with org name + user menu. shadcn components only.
+- [x] **3.3 App shell.** Sidebar (Knowledge Base, Playground, Conversations, Analytics-stub, Settings-stub), topbar with org name + user menu. shadcn components only.
       *Verify:* navigation works; responsive at 375px width.
 - [ ] **3.4 Knowledge Base manager.** Upload PDF (drag-drop), add URL, add raw text; table of documents (title, type, status auto-refreshing, chunk count, created); delete (confirm dialog) and re-index actions wired to API (`/documents` CRUD + `/documents/{id}/reindex`).
       *Verify:* Playwright — upload fixture PDF → status reaches `ready` → chunk count > 0 → delete removes it.

@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 
-import { Button } from "@/components/ui/button";
+import { AppShell } from "@/components/app-shell";
 import { logout, useSession } from "@/lib/session";
 
 export default function DashboardLayout({
@@ -35,19 +35,8 @@ export default function DashboardLayout({
   }
 
   return (
-    <div className="min-h-screen">
-      <header className="flex items-center justify-between border-b px-6 py-3">
-        <span className="font-semibold">HelpDeck</span>
-        <div className="flex items-center gap-3 text-sm">
-          <span data-testid="user-email" className="text-muted-foreground">
-            {user.email}
-          </span>
-          <Button variant="outline" size="sm" onClick={onLogout}>
-            Log out
-          </Button>
-        </div>
-      </header>
-      <div className="p-6">{children}</div>
-    </div>
+    <AppShell user={user} onLogout={onLogout}>
+      {children}
+    </AppShell>
   );
 }

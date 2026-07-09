@@ -42,7 +42,8 @@ test("logout returns to login and blocks the dashboard", async ({ page }) => {
   await page.getByRole("button", { name: "Create account" }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
 
-  await page.getByRole("button", { name: "Log out" }).click();
+  await page.getByTestId("user-menu").click();
+  await page.getByRole("menuitem", { name: "Log out" }).click();
   await expect(page).toHaveURL(/\/login/);
 
   await page.goto("/dashboard");
