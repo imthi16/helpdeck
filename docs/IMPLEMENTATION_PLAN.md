@@ -52,7 +52,7 @@
       *Verify:* unit test with mocked provider — batching + retry behavior.
 - [x] **1.5 Background jobs.** `arq` worker + Redis: `ingest_document(document_id)` job runs extract → chunk → embed → upsert, updates `documents.status`, records error message on failure.
       *Verify:* integration test — enqueue fixture PDF → status transitions to `ready`, chunks persisted with embeddings.
-- [ ] **1.6 Hybrid search.** `app/services/retrieval.py`: dense top-k (pgvector cosine) and full-text top-k (`ts_rank_cd` on `plainto_tsquery`) in parallel → Reciprocal Rank Fusion (k=60) → top-N with scores.
+- [x] **1.6 Hybrid search.** `app/services/retrieval.py`: dense top-k (pgvector cosine) and full-text top-k (`ts_rank_cd` on `plainto_tsquery`) in parallel → Reciprocal Rank Fusion (k=60) → top-N with scores.
       *Verify:* unit test for RRF math; integration test — a keyword-only query and a paraphrase query both surface the right chunk.
 - [ ] **1.7 Reranker interface.** `Reranker` protocol with `NoopReranker` (default), `CohereReranker`, selected by `RERANKER` env. Applied to fused top-50 → top-8.
       *Verify:* unit test — noop preserves order; provider called only when configured.
