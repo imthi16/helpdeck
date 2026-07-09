@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     response_cache_ttl_seconds: int = 3600
 
     jwt_secret: str = "change-me"
+    jwt_algorithm: str = "HS256"
+    access_token_ttl_minutes: int = 15
+    refresh_token_ttl_days: int = 7
+    cookie_secure: bool = False
+    cookie_domain: str | None = None
 
     anthropic_api_key: str = ""
     openai_api_key: str = ""

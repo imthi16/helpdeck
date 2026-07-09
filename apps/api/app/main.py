@@ -5,7 +5,7 @@ from fastapi import FastAPI
 
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
-from app.routers import chat, internal
+from app.routers import auth, chat, internal
 
 
 @asynccontextmanager
@@ -39,6 +39,7 @@ def create_app() -> FastAPI:
     async def health() -> dict[str, str]:
         return {"status": "ok", "version": settings.version}
 
+    application.include_router(auth.router)
     # Router is always mounted; each request is gated by ENABLE_INTERNAL_ROUTES.
     application.include_router(internal.router)
     application.include_router(chat.router)

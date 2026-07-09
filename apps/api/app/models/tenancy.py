@@ -3,7 +3,7 @@ import uuid
 
 from sqlalchemy import Enum, ForeignKey, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
@@ -20,6 +20,10 @@ class Organization(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     name: Mapped[str] = mapped_column(String(255), nullable=False)
 
+    memberships: Mapped[list["Membership"]] = relationship(
+        back_populates="organization", cascade="all, delete-orphan"
+    )
+
 
 class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "users"
@@ -27,6 +31,10 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     email: Mapped[str] = mapped_column(String(320), unique=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+
+    memberships: Mapped[list["Membership"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class Membership(Base, UUIDPrimaryKeyMixin, TimestampMixin):
@@ -48,3 +56,6 @@ class Membership(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     role: Mapped[MembershipRole] = mapped_column(
         Enum(MembershipRole, name="membership_role"), nullable=False
     )
+
+    organization: Mapped["Organization"] = relationship(back_populates="memberships")
+    user: Mapped["User"] = relationship(back_populates="memberships")

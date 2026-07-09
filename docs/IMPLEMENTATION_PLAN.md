@@ -86,7 +86,7 @@
 
 **Goal:** a user can sign up, upload docs, and chat in a playground. (Main Next.js learning block — keep components boring and shadcn-standard.)
 
-- [ ] **3.1 Auth API.** `POST /auth/signup` (user + org + owner membership), `/auth/login`, `/auth/refresh`, `/auth/me`. JWT access (15m) + refresh (7d) in httpOnly cookies; passlib/bcrypt hashing.
+- [x] **3.1 Auth API.** `POST /auth/signup` (user + org + owner membership), `/auth/login`, `/auth/refresh`, `/auth/me`. JWT access (15m) + refresh (7d) in httpOnly cookies; passlib/bcrypt hashing.
       *Verify:* pytest — signup/login/refresh flows, wrong-password and expired-token cases.
 - [ ] **3.2 Web auth pages + session.** `/signup`, `/login`, middleware-protected `(dashboard)` route group, `useSession` helper, logout.
       *Verify:* manual flow + Playwright smoke: signup → land on dashboard → refresh keeps session.
