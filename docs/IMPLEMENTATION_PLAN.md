@@ -54,7 +54,7 @@
       *Verify:* integration test — enqueue fixture PDF → status transitions to `ready`, chunks persisted with embeddings.
 - [x] **1.6 Hybrid search.** `app/services/retrieval.py`: dense top-k (pgvector cosine) and full-text top-k (`ts_rank_cd` on `plainto_tsquery`) in parallel → Reciprocal Rank Fusion (k=60) → top-N with scores.
       *Verify:* unit test for RRF math; integration test — a keyword-only query and a paraphrase query both surface the right chunk.
-- [ ] **1.7 Reranker interface.** `Reranker` protocol with `NoopReranker` (default), `CohereReranker`, selected by `RERANKER` env. Applied to fused top-50 → top-8.
+- [x] **1.7 Reranker interface.** `Reranker` protocol with `NoopReranker` (default), `CohereReranker`, selected by `RERANKER` env. Applied to fused top-50 → top-8.
       *Verify:* unit test — noop preserves order; provider called only when configured.
 - [ ] **1.8 Seed corpus + search endpoint.** `eval/fixtures/` with a fictional product's docs (~20 pages: FAQ, policies, how-tos) + `scripts/seed.py` creating demo org and ingesting them. Internal `POST /internal/search {org_id, query}` returning chunks + scores (dev-only, behind a flag).
       *Verify:* for 10 hand-written queries in `eval/fixtures/queries.json`, expected chunk appears in top-3 for ≥ 8.

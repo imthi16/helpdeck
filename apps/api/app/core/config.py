@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     llm_cheap_model: str = ""
     llm_strong_model: str = ""
     reranker: str = "none"
+    cohere_api_key: str = ""
 
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""
