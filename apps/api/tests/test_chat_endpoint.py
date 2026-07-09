@@ -11,7 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.main import app
 from app.models import Message, MessageRole, Organization
-from app.routers.chat import get_chat_gateway, get_chat_sessionmaker
+from app.routers.chat import get_chat_cache, get_chat_gateway, get_chat_sessionmaker
+from app.services.cache import ResponseCache, get_redis
 from app.services.embeddings import EmbeddingService
 from app.services.ingestion.seed import seed_corpus
 from app.services.llm import LLMGateway, LLMUsage, OfflineGroundedProvider
@@ -20,6 +21,23 @@ from app.services.storage import LocalFileStorage
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CORPUS_DIR = REPO_ROOT / "eval" / "fixtures" / "corpus"
 Sessionmaker = async_sessionmaker[AsyncSession]
+
+
+class CountingProvider(OfflineGroundedProvider):
+    """Offline provider that counts how many times the model is invoked."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def complete(self, model, messages, **kwargs) -> tuple[str, LLMUsage]:
+        self.calls += 1
+        text = self._respond(messages)
+        return text, LLMUsage(prompt_tokens=1, completion_tokens=len(text.split()))
+
+    async def stream(self, model, messages, **kwargs) -> AsyncIterator[str]:
+        self.calls += 1
+        for token in self._respond(messages).split(" "):
+            yield token + " "
 
 
 class SlowOfflineProvider(OfflineGroundedProvider):
@@ -128,6 +146,51 @@ async def test_chat_streams_events_ending_in_done(
         assert messages[1].citations
     finally:
         app.dependency_overrides.clear()
+
+
+async def test_identical_query_served_from_cache_without_llm_call(
+    db_sessionmaker: Sessionmaker, seeded: uuid.UUID
+) -> None:
+    org_id = seeded
+    provider = CountingProvider()
+    gateway = LLMGateway(provider, cheap_model="c", strong_model="s")
+    redis_client = get_redis()
+    app.dependency_overrides[get_chat_sessionmaker] = lambda: db_sessionmaker
+    app.dependency_overrides[get_chat_gateway] = lambda: gateway
+    app.dependency_overrides[get_chat_cache] = lambda: ResponseCache(redis_client, ttl_seconds=30)
+    body = {
+        "org_id": str(org_id),
+        "message": "How often should I descale my espresso machine?",
+    }
+    try:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            first = await client.post("/api/v1/chat", json=body)
+            assert first.headers["X-HelpDeck-Cache"] == "miss"
+            first_events = _parse_sse(first.text)
+            assert first_events[-1][1]["cached"] is False
+            calls_after_first = provider.calls
+            assert calls_after_first > 0
+
+            second = await client.post("/api/v1/chat", json=body)
+            assert second.headers["X-HelpDeck-Cache"] == "hit"
+            second_events = _parse_sse(second.text)
+            assert second_events[-1][0] == "done"
+            assert second_events[-1][1]["cached"] is True
+            # No further LLM calls on the cached path.
+            assert provider.calls == calls_after_first
+
+            # Cache still returns the answer body and any citations.
+            token_events = [p for name, p in second_events if name == "token"]
+            assert token_events
+
+            # Bypass flag forces a live run (and another LLM call).
+            third = await client.post("/api/v1/chat", json={**body, "bypass_cache": True})
+            assert third.headers["X-HelpDeck-Cache"] == "miss"
+            assert provider.calls > calls_after_first
+    finally:
+        app.dependency_overrides.clear()
+        await redis_client.aclose()
 
 
 async def test_disconnect_midstream_leaves_no_assistant_message(

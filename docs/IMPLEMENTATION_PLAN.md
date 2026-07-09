@@ -7,8 +7,8 @@
 
 ## Status
 
-- **Current phase:** 1 (complete) → 2 next
-- **Last updated:** 2026-07-09
+- **Current phase:** 2 (complete) → 3 next
+- **Last updated:** 2026-07-10
 - **Blockers:** none
 
 ---
@@ -75,7 +75,7 @@
       *Verify:* integration tests on seed corpus — (a) in-KB question → answer contains `[n]` citations mapping to real chunks; (b) out-of-KB question ("what is your CEO's shoe size") → refusal + escalation row; (c) "let me talk to a human" → escalation.
 - [x] **2.4 SSE chat endpoint.** `POST /api/v1/chat` via `sse-starlette`: events `status` (routing/retrieving), `token`, `citation`, `done` (message_id, confidence), `error`. Heartbeat ~15s, `X-Accel-Buffering: no`, graceful `asyncio.CancelledError` on disconnect. Persists the full exchange.
       *Verify:* `curl -N` shows streaming events ending in `done`; disconnect mid-stream leaves no orphaned state.
-- [ ] **2.5 Response cache.** Redis exact-match cache keyed on `(org_id, normalized_query, kb_version)`; TTL config; bypass flag for playground.
+- [x] **2.5 Response cache.** Redis exact-match cache keyed on `(org_id, normalized_query, kb_version)`; TTL config; bypass flag for playground.
       *Verify:* second identical query served from cache (asserted via header/flag) with no LLM call.
 
 **Exit criteria:** streaming grounded cited answers; unknown → refusal + escalation; all tests green.

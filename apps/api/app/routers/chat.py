@@ -22,6 +22,7 @@ from app.core.db import async_session_factory
 from app.core.logging import get_logger
 from app.models import Conversation, Message, MessageRole
 from app.schemas.chat import ChatRequest
+from app.services.cache import CachedAnswer, ResponseCache, compute_kb_version, get_redis
 from app.services.llm import LLMGateway
 
 logger = get_logger(__name__)
@@ -42,6 +43,10 @@ def get_chat_checkpointer(request: Request) -> Any:
 
 def get_chat_gateway() -> LLMGateway:
     return LLMGateway()
+
+
+def get_chat_cache() -> ResponseCache:
+    return ResponseCache(get_redis())
 
 
 def _sse(event: str, payload: dict[str, Any]) -> ServerSentEvent:
@@ -94,12 +99,35 @@ async def _persist_message(
         return message.id
 
 
+async def _replay_cached(
+    cached: CachedAnswer,
+    conversation_id: uuid.UUID,
+    message_id: uuid.UUID,
+) -> AsyncIterator[ServerSentEvent]:
+    yield _sse("status", {"stage": "cached"})
+    if cached.content:
+        yield _sse("token", {"text": cached.content})
+    for citation in cached.citations:
+        yield _sse("citation", citation)
+    yield _sse(
+        "done",
+        {
+            "message_id": str(message_id),
+            "conversation_id": str(conversation_id),
+            "confidence": cached.confidence,
+            "escalated": cached.escalated,
+            "cached": True,
+        },
+    )
+
+
 @router.post("/chat")
 async def chat(
     request: ChatRequest,
     sessionmaker: Annotated[async_sessionmaker[AsyncSession], Depends(get_chat_sessionmaker)],
     checkpointer: Annotated[Any, Depends(get_chat_checkpointer)],
     gateway: Annotated[LLMGateway, Depends(get_chat_gateway)],
+    cache: Annotated[ResponseCache, Depends(get_chat_cache)],
 ) -> EventSourceResponse:
     conversation_id = await _ensure_conversation(sessionmaker, request)
     await _persist_message(
@@ -109,6 +137,34 @@ async def chat(
         role=MessageRole.user,
         content=request.message,
     )
+
+    kb_version = await compute_kb_version(sessionmaker, request.org_id)
+    cached = (
+        None
+        if request.bypass_cache
+        else await cache.get(str(request.org_id), request.message, kb_version)
+    )
+    headers = {
+        "X-Accel-Buffering": "no",
+        "X-HelpDeck-Cache": "hit" if cached is not None else "miss",
+    }
+
+    if cached is not None:
+        message_id = await _persist_message(
+            sessionmaker,
+            org_id=request.org_id,
+            conversation_id=conversation_id,
+            role=MessageRole.assistant,
+            content=cached.content,
+            citations=cached.citations,
+            confidence=cached.confidence,
+            model_used=cached.model_used,
+        )
+        return EventSourceResponse(
+            _replay_cached(cached, conversation_id, message_id),
+            ping=HEARTBEAT_SECONDS,
+            headers=headers,
+        )
 
     async def event_stream() -> AsyncIterator[ServerSentEvent]:
         start = perf_counter()
@@ -148,6 +204,7 @@ async def chat(
             if not streamed_text and content:
                 yield _sse("token", {"text": content})
 
+            escalated = bool(final.get("escalated", False))
             message_id = await _persist_message(
                 sessionmaker,
                 org_id=request.org_id,
@@ -160,6 +217,22 @@ async def chat(
                 latency_ms=latency_ms,
             )
 
+            # Cache only settled (non-escalated) answers so escalations always
+            # re-run the agent and record a fresh escalation row.
+            if not escalated and content:
+                await cache.set(
+                    str(request.org_id),
+                    request.message,
+                    kb_version,
+                    CachedAnswer(
+                        content=content,
+                        citations=citations,
+                        confidence=confidence,
+                        escalated=escalated,
+                        model_used=final.get("model_used"),
+                    ),
+                )
+
             for citation in citations:
                 yield _sse("citation", citation)
 
@@ -169,15 +242,12 @@ async def chat(
                     "message_id": str(message_id),
                     "conversation_id": str(conversation_id),
                     "confidence": confidence,
-                    "escalated": bool(final.get("escalated", False)),
+                    "escalated": escalated,
+                    "cached": False,
                 },
             )
         except Exception as exc:  # noqa: BLE001 - surface any failure as an SSE error
             logger.exception("chat_stream_failed", conversation_id=str(conversation_id))
             yield _sse("error", {"detail": str(exc)})
 
-    return EventSourceResponse(
-        event_stream(),
-        ping=HEARTBEAT_SECONDS,
-        headers={"X-Accel-Buffering": "no"},
-    )
+    return EventSourceResponse(event_stream(), ping=HEARTBEAT_SECONDS, headers=headers)

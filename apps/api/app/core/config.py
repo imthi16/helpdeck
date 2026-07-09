@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     faithfulness_threshold: float = 0.7
     agent_retrieval_top_n: int = 8
 
+    # Response cache
+    response_cache_ttl_seconds: int = 3600
+
     jwt_secret: str = "change-me"
 
     anthropic_api_key: str = ""
