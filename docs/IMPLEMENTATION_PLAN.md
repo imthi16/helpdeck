@@ -67,7 +67,7 @@
 
 **Goal:** grounded, cited, streaming answers with a safe "I don't know" path.
 
-- [ ] **2.1 LLM gateway.** `app/services/llm.py`: single entry point for chat completions; `LLM_CHEAP_MODEL` / `LLM_STRONG_MODEL` routing param; provider-agnostic (thin wrapper; litellm acceptable); token + latency capture; Langfuse tracing on every call.
+- [x] **2.1 LLM gateway.** `app/services/llm.py`: single entry point for chat completions; `LLM_CHEAP_MODEL` / `LLM_STRONG_MODEL` routing param; provider-agnostic (thin wrapper; litellm acceptable); token + latency capture; Langfuse tracing on every call.
       *Verify:* unit test with mocked providers; no other module imports provider SDKs (enforce with a lint test).
 - [ ] **2.2 Conversation persistence.** Models + migration: `conversations (channel, status: open|escalated|closed, user_identifier, csat_score)`, `messages (role, content, citations jsonb, confidence, model_used, tokens_in/out, latency_ms)`, `escalations (reason, status)`.
       *Verify:* migration clean; CRUD tested.
