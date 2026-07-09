@@ -6,6 +6,9 @@ retried with exponential backoff.
 """
 
 import asyncio
+import hashlib
+import math
+import re
 from typing import Protocol
 
 from app.core.config import get_settings
@@ -17,6 +20,7 @@ logger = get_logger(__name__)
 MAX_BATCH_SIZE = 100
 MAX_RETRIES = 3
 BASE_RETRY_DELAY_SECONDS = 0.5
+EMBEDDING_DIMS = 1536
 
 
 class EmbeddingError(Exception):
@@ -38,6 +42,65 @@ class OpenAIEmbeddingProvider:
         return [item.embedding for item in sorted(response.data, key=lambda d: d.index)]
 
 
+_TOKEN = re.compile(r"[a-z0-9]+")
+
+_STOPWORDS = frozenset(
+    """a an and are as at be but by can do does for from has have how i if in into is it
+    its my no not of on or our so that the their then there these this to up us was we
+    what when where which who will with you your""".split()
+)
+
+
+def _normalize_token(token: str) -> str:
+    for suffix in ("ing", "ed", "es", "ly", "s"):
+        if len(token) > len(suffix) + 2 and token.endswith(suffix):
+            return token[: -len(suffix)]
+    return token
+
+
+def _lexical_tokens(text: str) -> list[str]:
+    return [
+        _normalize_token(token)
+        for token in _TOKEN.findall(text.lower())
+        if token not in _STOPWORDS and len(token) > 1
+    ]
+
+
+class HashingEmbeddingProvider:
+    """Deterministic, offline bag-of-tokens embedding for dev without an API key.
+
+    Content tokens (stopwords dropped, lightly suffix-normalized) are hashed into
+    ``dims`` buckets and the vector is L2-normalized, so cosine similarity
+    approximates lexical overlap. Not a substitute for a real semantic model —
+    production uses OpenAI when ``OPENAI_API_KEY`` is set.
+    """
+
+    def __init__(self, dims: int = EMBEDDING_DIMS) -> None:
+        self._dims = dims
+
+    def _embed_one(self, text: str) -> list[float]:
+        vector = [0.0] * self._dims
+        for token in _lexical_tokens(text):
+            digest = hashlib.blake2b(token.encode(), digest_size=8).digest()
+            bucket = int.from_bytes(digest, "big") % self._dims
+            vector[bucket] += 1.0
+        norm = math.sqrt(sum(value * value for value in vector))
+        if norm > 0:
+            vector = [value / norm for value in vector]
+        return vector
+
+    async def embed(self, texts: list[str], model: str) -> list[list[float]]:
+        return [self._embed_one(text) for text in texts]
+
+
+def _default_provider() -> EmbeddingProvider:
+    settings = get_settings()
+    if settings.openai_api_key:
+        return OpenAIEmbeddingProvider(settings.openai_api_key)
+    logger.warning("embeddings_offline_mode", reason="OPENAI_API_KEY unset; using hashing provider")
+    return HashingEmbeddingProvider(EMBEDDING_DIMS)
+
+
 class EmbeddingService:
     def __init__(
         self,
@@ -49,7 +112,7 @@ class EmbeddingService:
         base_retry_delay: float = BASE_RETRY_DELAY_SECONDS,
     ) -> None:
         settings = get_settings()
-        self._provider = provider or OpenAIEmbeddingProvider(settings.openai_api_key)
+        self._provider = provider or _default_provider()
         self._model = model or settings.embedding_model
         self._max_batch_size = max_batch_size
         self._max_retries = max_retries

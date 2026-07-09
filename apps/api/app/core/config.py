@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     # Local filesystem storage for raw uploaded sources (object store in prod).
     storage_dir: str = "./storage"
 
+    # Dev-only internal routes (e.g. /internal/search). Never enable in prod.
+    enable_internal_routes: bool = False
+
     jwt_secret: str = "change-me"
 
     anthropic_api_key: str = ""

@@ -7,7 +7,7 @@
 
 ## Status
 
-- **Current phase:** 0
+- **Current phase:** 1 (complete) → 2 next
 - **Last updated:** 2026-07-09
 - **Blockers:** none
 
@@ -56,7 +56,7 @@
       *Verify:* unit test for RRF math; integration test — a keyword-only query and a paraphrase query both surface the right chunk.
 - [x] **1.7 Reranker interface.** `Reranker` protocol with `NoopReranker` (default), `CohereReranker`, selected by `RERANKER` env. Applied to fused top-50 → top-8.
       *Verify:* unit test — noop preserves order; provider called only when configured.
-- [ ] **1.8 Seed corpus + search endpoint.** `eval/fixtures/` with a fictional product's docs (~20 pages: FAQ, policies, how-tos) + `scripts/seed.py` creating demo org and ingesting them. Internal `POST /internal/search {org_id, query}` returning chunks + scores (dev-only, behind a flag).
+- [x] **1.8 Seed corpus + search endpoint.** `eval/fixtures/` with a fictional product's docs (~20 pages: FAQ, policies, how-tos) + `scripts/seed.py` creating demo org and ingesting them. Internal `POST /internal/search {org_id, query}` returning chunks + scores (dev-only, behind a flag).
       *Verify:* for 10 hand-written queries in `eval/fixtures/queries.json`, expected chunk appears in top-3 for ≥ 8.
 
 **Exit criteria:** pytest green; seed + search demonstrably returns relevant grounded chunks.

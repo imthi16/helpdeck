@@ -37,5 +37,8 @@ blob-report/
 *.log
 logs/
 
+# Raw source storage (dev)
+storage/
+
 # Local scratch
 .claude/settings.local.json

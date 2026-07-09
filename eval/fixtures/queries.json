@@ -1,0 +1,52 @@
+[
+  {
+    "query": "What is the return window for items?",
+    "expected_doc": "returns",
+    "expected_contains": "within 30 days of delivery"
+  },
+  {
+    "query": "When will I receive my refund after a return?",
+    "expected_doc": "returns",
+    "expected_contains": "within five business days"
+  },
+  {
+    "query": "What is the free shipping threshold?",
+    "expected_doc": "shipping",
+    "expected_contains": "free standard shipping"
+  },
+  {
+    "query": "How long does delivery to the European Union take?",
+    "expected_doc": "shipping",
+    "expected_contains": "seven to ten business days"
+  },
+  {
+    "query": "Is my espresso machine covered by warranty?",
+    "expected_doc": "warranty",
+    "expected_contains": "two-year limited manufacturer warranty"
+  },
+  {
+    "query": "How often should I descale my espresso machine?",
+    "expected_doc": "descaling",
+    "expected_contains": "every three months"
+  },
+  {
+    "query": "How do I cancel my coffee subscription?",
+    "expected_doc": "account-billing",
+    "expected_contains": "cancel your subscription at any time"
+  },
+  {
+    "query": "Which payment methods do you accept?",
+    "expected_doc": "account-billing",
+    "expected_contains": "Visa, Mastercard, American Express"
+  },
+  {
+    "query": "How do I fill the water tank on first setup?",
+    "expected_doc": "getting-started",
+    "expected_contains": "up to the MAX line"
+  },
+  {
+    "query": "What should I use to descale, can I use vinegar?",
+    "expected_doc": "descaling",
+    "expected_contains": "Never use vinegar"
+  }
+]
