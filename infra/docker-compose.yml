@@ -1,0 +1,36 @@
+name: helpdeck
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: helpdeck
+      POSTGRES_PASSWORD: helpdeck
+      POSTGRES_DB: helpdeck
+    ports:
+      # Host port 5433 to avoid clashing with other local Postgres stacks.
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U helpdeck -d helpdeck"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    ports:
+      # Host port 6380 to avoid clashing with other local Redis stacks.
+      - "6380:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:
+  redis_data:
