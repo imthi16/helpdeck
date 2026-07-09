@@ -48,7 +48,7 @@
       *Verify:* unit tests with a fixture PDF, a saved HTML page, and a .md file.
 - [x] **1.3 Chunker.** Heading-aware recursive splitter: target 500–800 tokens, 10–15% overlap, never split mid-sentence, carry heading path into `metadata`. Pure function.
       *Verify:* unit tests — sizes within bounds, overlap correct, headings preserved.
-- [ ] **1.4 Embedding service.** `app/services/embeddings.py`: batched (≤100 texts/call), retry with exponential backoff, model from `EMBEDDING_MODEL`. All calls Langfuse-traced (no-op if keys unset).
+- [x] **1.4 Embedding service.** `app/services/embeddings.py`: batched (≤100 texts/call), retry with exponential backoff, model from `EMBEDDING_MODEL`. All calls Langfuse-traced (no-op if keys unset).
       *Verify:* unit test with mocked provider — batching + retry behavior.
 - [ ] **1.5 Background jobs.** `arq` worker + Redis: `ingest_document(document_id)` job runs extract → chunk → embed → upsert, updates `documents.status`, records error message on failure.
       *Verify:* integration test — enqueue fixture PDF → status transitions to `ready`, chunks persisted with embeddings.
