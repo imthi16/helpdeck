@@ -42,3 +42,6 @@ storage/
 
 # Local scratch
 .claude/settings.local.json
+
+# E2E ingest storage
+apps/api/.e2e-storage/

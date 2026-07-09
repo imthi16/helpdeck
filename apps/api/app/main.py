@@ -6,15 +6,24 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
-from app.routers import auth, chat, internal
+from app.routers import auth, chat, documents, internal
+from app.services.queue import create_arq_pool
 
 
 @asynccontextmanager
 async def lifespan(application: FastAPI) -> AsyncIterator[None]:
-    """Set up a shared Postgres checkpointer for the agent, if reachable."""
+    """Set up shared resources: agent checkpointer and the arq ingest pool."""
     logger = get_logger(__name__)
     settings = get_settings()
     dsn = settings.database_url.replace("postgresql+asyncpg://", "postgresql://")
+
+    try:
+        application.state.arq_pool = await create_arq_pool()
+        logger.info("arq_pool_ready")
+    except Exception as exc:  # noqa: BLE001 - degrade gracefully without queue
+        logger.warning("arq_pool_unavailable", error=str(exc))
+        application.state.arq_pool = None
+
     try:
         from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
@@ -27,6 +36,10 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         logger.warning("checkpointer_unavailable", error=str(exc))
         application.state.chat_checkpointer = None
         yield
+
+    pool = getattr(application.state, "arq_pool", None)
+    if pool is not None:
+        await pool.aclose()
 
 
 def create_app() -> FastAPI:
@@ -50,6 +63,7 @@ def create_app() -> FastAPI:
         return {"status": "ok", "version": settings.version}
 
     application.include_router(auth.router)
+    application.include_router(documents.router)
     # Router is always mounted; each request is gated by ENABLE_INTERNAL_ROUTES.
     application.include_router(internal.router)
     application.include_router(chat.router)

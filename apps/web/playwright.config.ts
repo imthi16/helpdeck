@@ -19,13 +19,18 @@ export default defineConfig({
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: [
     {
-      command: `uv run alembic upgrade head && uv run uvicorn app.main:app --port ${API_PORT}`,
+      // Run the arq ingest worker (background) next to the API so uploads reach `ready`.
+      command:
+        `uv run alembic upgrade head && ` +
+        `(uv run arq app.workers.main.WorkerSettings & ` +
+        `uv run uvicorn app.main:app --port ${API_PORT})`,
       cwd: "../api",
       port: API_PORT,
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,
       env: {
         ALLOWED_ORIGINS: WEB_URL,
+        STORAGE_DIR: ".e2e-storage",
       },
     },
     {

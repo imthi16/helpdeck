@@ -92,7 +92,7 @@
       *Verify:* manual flow + Playwright smoke: signup → land on dashboard → refresh keeps session.
 - [x] **3.3 App shell.** Sidebar (Knowledge Base, Playground, Conversations, Analytics-stub, Settings-stub), topbar with org name + user menu. shadcn components only.
       *Verify:* navigation works; responsive at 375px width.
-- [ ] **3.4 Knowledge Base manager.** Upload PDF (drag-drop), add URL, add raw text; table of documents (title, type, status auto-refreshing, chunk count, created); delete (confirm dialog) and re-index actions wired to API (`/documents` CRUD + `/documents/{id}/reindex`).
+- [x] **3.4 Knowledge Base manager.** Upload PDF (drag-drop), add URL, add raw text; table of documents (title, type, status auto-refreshing, chunk count, created); delete (confirm dialog) and re-index actions wired to API (`/documents` CRUD + `/documents/{id}/reindex`).
       *Verify:* Playwright — upload fixture PDF → status reaches `ready` → chunk count > 0 → delete removes it.
 - [ ] **3.5 Playground.** Chat UI consuming the SSE endpoint (streaming tokens, markdown, citation chips). Debug side-panel: retrieved chunks with scores, latency breakdown, model used, token cost, confidence.
       *Verify:* Playwright — ask seeded question → streamed answer with ≥1 citation → debug panel populated.
