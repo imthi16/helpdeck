@@ -27,7 +27,7 @@
       *Verify:* `uv run alembic upgrade head` runs clean against Compose Postgres.
 - [x] **0.5 Next.js dashboard skeleton.** `apps/web`: Next.js 16, TypeScript strict, Tailwind, shadcn/ui initialized, placeholder landing page, `lib/api.ts` fetch wrapper pointing at `NEXT_PUBLIC_API_URL`.
       *Verify:* `pnpm dev` renders; `pnpm lint && pnpm typecheck && pnpm build` pass.
-- [ ] **0.6 Widget skeleton.** `apps/widget`: Vite + Preact, builds a single IIFE bundle `dist/helpdeck.js` that logs "HelpDeck loaded" and reads `data-public-key` from its own `<script>` tag.
+- [x] **0.6 Widget skeleton.** `apps/widget`: Vite + Preact, builds a single IIFE bundle `dist/helpdeck.js` that logs "HelpDeck loaded" and reads `data-public-key` from its own `<script>` tag.
       *Verify:* `pnpm build` emits one JS file; opening `examples/demo.html` logs the message + key.
 - [ ] **0.7 CI pipeline.** `.github/workflows/ci.yml`: job 1 api (uv sync, ruff check, pytest), job 2 web (pnpm lint, typecheck, build), job 3 widget (build + fail if gzipped bundle > 60KB). Trigger on PR + main.
       *Verify:* CI green on a test PR.
