@@ -1,27 +1,9 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
-async function signUpAndSeed(page: Page): Promise<void> {
-  const email = `conv-${Date.now()}-${Math.floor(Math.random() * 1e6)}@example.com`;
-  await page.goto("/signup");
-  await page.getByLabel("Your name").fill("Conv User");
-  await page.getByLabel("Organization name").fill("Conv Coffee Co");
-  await page.getByLabel("Email").fill(email);
-  await page.getByLabel("Password").fill("supersecret1");
-  await page.getByRole("button", { name: "Create account" }).click();
-  await expect(page).toHaveURL(/\/dashboard$/);
-
-  await page.goto("/dashboard/knowledge-base");
-  await page.getByRole("tab", { name: "Paste text" }).click();
-  await page.getByLabel("Title").fill("Descaling Guide");
-  await page.getByLabel("Content").fill("# Descaling\n\nDescale every three months.");
-  await page.getByRole("button", { name: "Add text" }).click();
-  await expect(
-    page.getByTestId("doc-row").filter({ hasText: "Descaling Guide" }).getByTestId("doc-status"),
-  ).toHaveText("ready", { timeout: 20_000 });
-}
+import { signUpAndSeedText } from "./helpers";
 
 test("an escalated chat appears in the inbox and can be resolved", async ({ page }) => {
-  await signUpAndSeed(page);
+  await signUpAndSeedText(page, "Descaling Guide", "# Descaling\n\nDescale every three months.", "conv");
 
   // Trigger an escalation with an out-of-KB question.
   await page.goto("/dashboard/playground");

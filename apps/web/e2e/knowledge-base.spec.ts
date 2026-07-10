@@ -1,22 +1,13 @@
 import path from "node:path";
 
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+
+import { signUp } from "./helpers";
 
 const PDF_FIXTURE = path.resolve(__dirname, "../../api/tests/fixtures/sample.pdf");
 
-async function signUp(page: Page): Promise<void> {
-  const email = `kb-${Date.now()}-${Math.floor(Math.random() * 1e6)}@example.com`;
-  await page.goto("/signup");
-  await page.getByLabel("Your name").fill("KB User");
-  await page.getByLabel("Organization name").fill("KB Coffee Co");
-  await page.getByLabel("Email").fill(email);
-  await page.getByLabel("Password").fill("supersecret1");
-  await page.getByRole("button", { name: "Create account" }).click();
-  await expect(page).toHaveURL(/\/dashboard$/);
-}
-
 test("upload a PDF, wait for ready, then delete it", async ({ page }) => {
-  await signUp(page);
+  await signUp(page, "kb");
   await page.goto("/dashboard/knowledge-base");
 
   await page.getByTestId("file-input").setInputFiles(PDF_FIXTURE);
@@ -40,7 +31,7 @@ test("upload a PDF, wait for ready, then delete it", async ({ page }) => {
 });
 
 test("add a raw text document", async ({ page }) => {
-  await signUp(page);
+  await signUp(page, "kb");
   await page.goto("/dashboard/knowledge-base");
 
   await page.getByRole("tab", { name: "Paste text" }).click();

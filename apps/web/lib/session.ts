@@ -10,6 +10,7 @@ export interface Membership {
   org_id: string;
   org_name: string;
   role: Role;
+  onboarded: boolean;
 }
 
 export interface SessionUser {
@@ -40,6 +41,13 @@ export function signup(input: {
 
 export function logout(): Promise<void> {
   return api<void>("/auth/logout", { method: "POST" });
+}
+
+export function completeOnboarding(orgName?: string): Promise<SessionUser> {
+  return api<SessionUser>("/api/v1/onboarding/complete", {
+    method: "POST",
+    body: JSON.stringify({ org_name: orgName }),
+  });
 }
 
 export function fetchMe(): Promise<SessionUser> {

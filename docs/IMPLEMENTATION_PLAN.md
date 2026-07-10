@@ -7,7 +7,7 @@
 
 ## Status
 
-- **Current phase:** 2 (complete) → 3 next
+- **Current phase:** 3 (complete) → 4 next
 - **Last updated:** 2026-07-10
 - **Blockers:** none
 
@@ -98,7 +98,7 @@
       *Verify:* Playwright — ask seeded question → streamed answer with ≥1 citation → debug panel populated.
 - [x] **3.6 Conversations inbox.** List with filters (status/channel/date), transcript view, escalated queue tab, "mark resolved" action, internal reply on escalations (stored on conversation).
       *Verify:* escalation from 2.3 test appears; resolving updates status.
-- [ ] **3.7 Onboarding wizard.** First-login flow: name org → upload first doc → ask a test question → shown embed snippet (`<script src=... data-public-key=...>` — key becomes real in Phase 5, placeholder OK).
+- [x] **3.7 Onboarding wizard.** First-login flow: name org → upload first doc → ask a test question → shown embed snippet (`<script src=... data-public-key=...>` — key becomes real in Phase 5, placeholder OK).
       *Verify:* fresh signup is routed through wizard exactly once.
 
 **Exit criteria:** Playwright E2E green — signup → upload → grounded cited answer in playground.

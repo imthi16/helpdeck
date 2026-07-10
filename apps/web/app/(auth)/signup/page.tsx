@@ -39,7 +39,7 @@ export default function SignupPage() {
     setSubmitting(true);
     try {
       await signup(form);
-      router.replace("/dashboard");
+      router.replace("/onboarding");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Sign up failed");
     } finally {

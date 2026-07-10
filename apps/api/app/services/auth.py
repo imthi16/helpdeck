@@ -67,6 +67,7 @@ async def load_user_response(session: AsyncSession, user_id: uuid.UUID) -> UserR
             org_id=membership.org_id,
             org_name=membership.organization.name,
             role=membership.role,
+            onboarded=membership.organization.onboarded,
         )
         for membership in user.memberships
     ]

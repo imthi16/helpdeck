@@ -21,6 +21,7 @@ class OrgMembership(BaseModel):
     org_id: uuid.UUID
     org_name: str
     role: MembershipRole
+    onboarded: bool
 
 
 class UserResponse(BaseModel):

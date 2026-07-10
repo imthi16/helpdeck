@@ -15,8 +15,12 @@ export default function DashboardLayout({
   const { user, loading, refresh } = useSession();
 
   useEffect(() => {
-    if (!loading && !user) {
+    if (loading) return;
+    if (!user) {
       router.replace("/login");
+    } else if (user.memberships[0] && !user.memberships[0].onboarded) {
+      // A fresh org must finish onboarding before using the dashboard.
+      router.replace("/onboarding");
     }
   }, [loading, user, router]);
 

@@ -1,21 +1,10 @@
 import { expect, test } from "@playwright/test";
 
-function uniqueEmail(): string {
-  return `e2e-${Date.now()}-${Math.floor(Math.random() * 1e6)}@example.com`;
-}
+import { signUp } from "./helpers";
 
-test("signup lands on dashboard and session survives refresh", async ({ page }) => {
-  const email = uniqueEmail();
+test("signup + onboarding lands on dashboard and session survives refresh", async ({ page }) => {
+  const email = await signUp(page, "auth");
 
-  await page.goto("/signup");
-  await page.getByLabel("Your name").fill("E2E User");
-  await page.getByLabel("Organization name").fill("E2E Coffee Co");
-  await page.getByLabel("Email").fill(email);
-  await page.getByLabel("Password").fill("supersecret1");
-  await page.getByRole("button", { name: "Create account" }).click();
-
-  // Lands on the dashboard.
-  await expect(page).toHaveURL(/\/dashboard$/);
   await expect(page.getByTestId("dashboard-heading")).toBeVisible();
   await expect(page.getByTestId("user-email")).toHaveText(email);
 
@@ -32,15 +21,7 @@ test("protected dashboard redirects to login when unauthenticated", async ({ pag
 });
 
 test("logout returns to login and blocks the dashboard", async ({ page }) => {
-  const email = uniqueEmail();
-
-  await page.goto("/signup");
-  await page.getByLabel("Your name").fill("Logout User");
-  await page.getByLabel("Organization name").fill("Logout Co");
-  await page.getByLabel("Email").fill(email);
-  await page.getByLabel("Password").fill("supersecret1");
-  await page.getByRole("button", { name: "Create account" }).click();
-  await expect(page).toHaveURL(/\/dashboard$/);
+  await signUp(page, "auth");
 
   await page.getByTestId("user-menu").click();
   await page.getByRole("menuitem", { name: "Log out" }).click();

@@ -1,19 +1,10 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
-async function signUp(page: Page): Promise<void> {
-  const email = `e2e-${Date.now()}-${Math.floor(Math.random() * 1e6)}@example.com`;
-  await page.goto("/signup");
-  await page.getByLabel("Your name").fill("Shell User");
-  await page.getByLabel("Organization name").fill("Shell Coffee Co");
-  await page.getByLabel("Email").fill(email);
-  await page.getByLabel("Password").fill("supersecret1");
-  await page.getByRole("button", { name: "Create account" }).click();
-  await expect(page).toHaveURL(/\/dashboard$/);
-}
+import { signUp } from "./helpers";
 
 test("sidebar navigates between sections on desktop", async ({ page }) => {
-  await signUp(page);
-  await expect(page.getByTestId("org-name")).toHaveText("Shell Coffee Co");
+  await signUp(page, "shell");
+  await expect(page.getByTestId("org-name")).toHaveText("E2E Coffee Co");
 
   for (const [label, heading] of [
     ["Knowledge Base", "Knowledge Base"],
@@ -29,7 +20,7 @@ test("sidebar navigates between sections on desktop", async ({ page }) => {
 
 test("mobile layout uses a drawer for navigation at 375px", async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 800 });
-  await signUp(page);
+  await signUp(page, "shell");
 
   // Desktop sidebar links are not visible at this width.
   const desktopLink = page.getByRole("link", { name: "Playground", exact: true });
