@@ -29,7 +29,11 @@ class SeedSummary:
     chunk_count: int
 
 
-async def _reset_org(sessionmaker: async_sessionmaker[AsyncSession], name: str) -> uuid.UUID:
+async def _reset_org(
+    sessionmaker: async_sessionmaker[AsyncSession],
+    name: str,
+    public_key: str | None = None,
+) -> uuid.UUID:
     async with sessionmaker() as session:
         existing = (
             (await session.execute(select(Organization).where(Organization.name == name)))
@@ -38,7 +42,10 @@ async def _reset_org(sessionmaker: async_sessionmaker[AsyncSession], name: str) 
         )
         for org in existing:
             await session.delete(org)  # cascade removes documents + chunks
+        await session.flush()
         org = Organization(name=name)
+        if public_key is not None:
+            org.public_key = public_key
         session.add(org)
         await session.commit()
         return org.id
@@ -51,12 +58,13 @@ async def seed_corpus(
     *,
     corpus_dir: Path,
     org_name: str = DEMO_ORG_NAME,
+    public_key: str | None = None,
 ) -> SeedSummary:
     files = await asyncio.to_thread(lambda: sorted(corpus_dir.glob(CORPUS_GLOB)))
     if not files:
         raise FileNotFoundError(f"no {CORPUS_GLOB} files found in {corpus_dir}")
 
-    org_id = await _reset_org(sessionmaker, org_name)
+    org_id = await _reset_org(sessionmaker, org_name, public_key)
     total_chunks = 0
 
     for path in files:

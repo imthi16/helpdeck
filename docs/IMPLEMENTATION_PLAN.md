@@ -113,7 +113,7 @@
       *Verify:* pytest — wrong key 401, wrong origin 403, burst hits 429.
 - [x] **4.2 Launcher + iframe shell.** `helpdeck.js` injects a launcher bubble (position/color from `data-*`), toggles an iframe pointing at `/widget-app` (a minimal route serving the chat app), passes public key + config via URL params/postMessage.
       *Verify:* `examples/demo.html` shows bubble; open/close works; host page styles never leak in (iframe isolation).
-- [ ] **4.3 Widget chat UI.** Streaming messages, markdown, citation chips opening a source popover (doc title + snippet), "Talk to a human" button (→ escalation + confirmation state), thumbs up/down per answer, session persisted in `localStorage` so refresh keeps the conversation.
+- [x] **4.3 Widget chat UI.** Streaming messages, markdown, citation chips opening a source popover (doc title + snippet), "Talk to a human" button (→ escalation + confirmation state), thumbs up/down per answer, session persisted in `localStorage` so refresh keeps the conversation.
       *Verify:* full conversation flow on demo page against local API.
 - [ ] **4.4 Bundle budget + polish.** Code-split so `helpdeck.js` (loader) stays tiny and the iframe app carries the weight; loader ≤ 60KB gz hard limit (CI already enforces); async/defer safe; no globals leaked except `window.HelpDeck`.
       *Verify:* CI size check passes; Lighthouse on demo page shows no blocking impact.

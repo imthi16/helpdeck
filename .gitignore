@@ -45,3 +45,4 @@ storage/
 
 # E2E ingest storage
 apps/api/.e2e-storage/
+apps/api/.e2e-widget-storage/
