@@ -33,6 +33,8 @@ class AgentState(TypedDict, total=False):
     citations: list[dict[str, Any]]
     confidence: float
     model_used: str
+    tokens_in: int
+    tokens_out: int
     escalated: bool
     escalation_reason: str
     response: str

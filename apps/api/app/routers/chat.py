@@ -81,6 +81,8 @@ async def _persist_message(
     citations: list[dict[str, Any]] | None = None,
     confidence: float | None = None,
     model_used: str | None = None,
+    tokens_in: int | None = None,
+    tokens_out: int | None = None,
     latency_ms: int | None = None,
 ) -> uuid.UUID:
     async with sessionmaker() as session:
@@ -92,6 +94,8 @@ async def _persist_message(
             citations=citations or [],
             confidence=confidence,
             model_used=model_used,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
             latency_ms=latency_ms,
         )
         session.add(message)
@@ -214,8 +218,32 @@ async def chat(
                 citations=citations,
                 confidence=confidence,
                 model_used=final.get("model_used"),
+                tokens_in=final.get("tokens_in"),
+                tokens_out=final.get("tokens_out"),
                 latency_ms=latency_ms,
             )
+
+            if request.debug:
+                yield _sse(
+                    "debug",
+                    {
+                        "intent": final.get("intent"),
+                        "model": final.get("model_used"),
+                        "confidence": confidence,
+                        "latency_ms": latency_ms,
+                        "tokens_in": final.get("tokens_in"),
+                        "tokens_out": final.get("tokens_out"),
+                        "chunks": [
+                            {
+                                "n": c.get("n"),
+                                "document_title": c.get("document_title"),
+                                "score": c.get("score"),
+                                "snippet": c.get("content", "")[:200],
+                            }
+                            for c in final.get("chunks", []) or []
+                        ],
+                    },
+                )
 
             # Cache only settled (non-escalated) answers so escalations always
             # re-run the agent and record a fresh escalation row.

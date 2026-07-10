@@ -17,6 +17,7 @@ from app.agent import prompts
 from app.agent.state import AgentDependencies, AgentState, chunk_to_dict
 from app.core.logging import get_logger
 from app.models import Conversation, ConversationStatus, Escalation
+from app.services.ingestion.chunker import count_tokens
 from app.services.llm import LLMMessage, LLMRoute
 from app.services.retrieval import HybridRetriever
 
@@ -116,10 +117,13 @@ def build_agent_graph(deps: AgentDependencies, checkpointer: Any = None):
             _emit("token", value=piece)
         text = "".join(pieces).strip()
         citations = parse_citations(text, chunks)
+        prompt_text = "\n".join(m.content for m in messages)
         return {
             "answer": text,
             "citations": citations,
             "model_used": deps.gateway.model_for(LLMRoute.strong),
+            "tokens_in": count_tokens(prompt_text),
+            "tokens_out": count_tokens(text),
         }
 
     async def faithfulness_judge(state: AgentState) -> AgentState:

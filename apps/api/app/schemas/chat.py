@@ -12,3 +12,4 @@ class ChatRequest(BaseModel):
     conversation_id: uuid.UUID | None = None
     channel: ConversationChannel = ConversationChannel.playground
     bypass_cache: bool = False
+    debug: bool = False
