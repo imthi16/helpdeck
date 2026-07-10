@@ -96,7 +96,7 @@
       *Verify:* Playwright — upload fixture PDF → status reaches `ready` → chunk count > 0 → delete removes it.
 - [x] **3.5 Playground.** Chat UI consuming the SSE endpoint (streaming tokens, markdown, citation chips). Debug side-panel: retrieved chunks with scores, latency breakdown, model used, token cost, confidence.
       *Verify:* Playwright — ask seeded question → streamed answer with ≥1 citation → debug panel populated.
-- [ ] **3.6 Conversations inbox.** List with filters (status/channel/date), transcript view, escalated queue tab, "mark resolved" action, internal reply on escalations (stored on conversation).
+- [x] **3.6 Conversations inbox.** List with filters (status/channel/date), transcript view, escalated queue tab, "mark resolved" action, internal reply on escalations (stored on conversation).
       *Verify:* escalation from 2.3 test appears; resolving updates status.
 - [ ] **3.7 Onboarding wizard.** First-login flow: name org → upload first doc → ask a test question → shown embed snippet (`<script src=... data-public-key=...>` — key becomes real in Phase 5, placeholder OK).
       *Verify:* fresh signup is routed through wizard exactly once.

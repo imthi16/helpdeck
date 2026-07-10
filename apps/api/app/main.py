@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
-from app.routers import auth, chat, documents, internal
+from app.routers import auth, chat, conversations, documents, internal
 from app.services.queue import create_arq_pool
 
 
@@ -64,6 +64,7 @@ def create_app() -> FastAPI:
 
     application.include_router(auth.router)
     application.include_router(documents.router)
+    application.include_router(conversations.router)
     # Router is always mounted; each request is gated by ENABLE_INTERNAL_ROUTES.
     application.include_router(internal.router)
     application.include_router(chat.router)
