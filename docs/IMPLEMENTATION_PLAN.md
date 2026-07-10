@@ -7,7 +7,7 @@
 
 ## Status
 
-- **Current phase:** 3 (complete) → 4 next
+- **Current phase:** 4 (complete) → 5 next
 - **Last updated:** 2026-07-10
 - **Blockers:** none
 
@@ -117,7 +117,7 @@
       *Verify:* full conversation flow on demo page against local API.
 - [x] **4.4 Bundle budget + polish.** Code-split so `helpdeck.js` (loader) stays tiny and the iframe app carries the weight; loader ≤ 60KB gz hard limit (CI already enforces); async/defer safe; no globals leaked except `window.HelpDeck`.
       *Verify:* CI size check passes; Lighthouse on demo page shows no blocking impact.
-- [ ] **4.5 Widget E2E.** Playwright: load demo page → open widget → ask seeded question → cited streamed answer → thumbs-up recorded → out-of-KB question → escalation message.
+- [x] **4.5 Widget E2E.** Playwright: load demo page → open widget → ask seeded question → cited streamed answer → thumbs-up recorded → out-of-KB question → escalation message.
       *Verify:* test green in CI.
 
 **Exit criteria:** widget fully works on a plain HTML page; E2E green. **← This is the sellable MVP line.**

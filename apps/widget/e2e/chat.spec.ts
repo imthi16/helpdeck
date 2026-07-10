@@ -41,6 +41,20 @@ test("talk to a human escalates and shows a handoff message", async ({ page }) =
   await expect(app.getByTestId("handoff")).toBeVisible({ timeout: 20_000 });
 });
 
+test("out-of-knowledge-base question escalates with a handoff message", async ({ page }) => {
+  await page.goto(HOST);
+  await page.locator('button[data-helpdeck="launcher"]').click();
+
+  const app = page.frameLocator(FRAME);
+  await expect(app.getByTestId("widget-welcome")).toBeVisible();
+  await app.getByTestId("widget-input").fill("What is your CEO's shoe size?");
+  await app.getByTestId("widget-input").press("Enter");
+
+  // No grounded answer -> escalation handoff shown, no citations.
+  await expect(app.getByTestId("handoff")).toBeVisible({ timeout: 20_000 });
+  await expect(app.getByTestId("citation-chip")).toHaveCount(0);
+});
+
 test("conversation persists across a page reload", async ({ page }) => {
   await page.goto(HOST);
   await page.locator('button[data-helpdeck="launcher"]').click();
