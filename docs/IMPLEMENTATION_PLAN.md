@@ -111,7 +111,7 @@
 
 - [x] **4.1 Widget API surface.** `GET /api/v1/widget/config` (branding, welcome message), `POST /api/v1/widget/chat` (SSE, same contract as 2.4), `POST /api/v1/widget/feedback` (thumbs). Auth: `X-Public-Key` header → org lookup; enforce Origin allowlist per org; Redis rate limit (per key + per IP) returning 429 + `Retry-After`.
       *Verify:* pytest — wrong key 401, wrong origin 403, burst hits 429.
-- [ ] **4.2 Launcher + iframe shell.** `helpdeck.js` injects a launcher bubble (position/color from `data-*`), toggles an iframe pointing at `/widget-app` (a minimal route serving the chat app), passes public key + config via URL params/postMessage.
+- [x] **4.2 Launcher + iframe shell.** `helpdeck.js` injects a launcher bubble (position/color from `data-*`), toggles an iframe pointing at `/widget-app` (a minimal route serving the chat app), passes public key + config via URL params/postMessage.
       *Verify:* `examples/demo.html` shows bubble; open/close works; host page styles never leak in (iframe isolation).
 - [ ] **4.3 Widget chat UI.** Streaming messages, markdown, citation chips opening a source popover (doc title + snippet), "Talk to a human" button (→ escalation + confirmation state), thumbs up/down per answer, session persisted in `localStorage` so refresh keeps the conversation.
       *Verify:* full conversation flow on demo page against local API.

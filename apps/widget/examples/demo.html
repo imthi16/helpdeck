@@ -2,11 +2,34 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>HelpDeck widget demo</title>
+    <style>
+      /* Deliberately aggressive host styles — these must NOT leak into the widget iframe. */
+      * {
+        font-family: "Comic Sans MS", cursive;
+      }
+      body {
+        background: #fef3c7;
+        color: #b91c1c;
+        padding: 2rem;
+      }
+      button {
+        background: hotpink !important;
+      }
+    </style>
   </head>
   <body>
-    <h1>HelpDeck widget demo page</h1>
-    <p>Open the console — the widget should log that it loaded, with its public key.</p>
-    <script src="../dist/helpdeck.js" data-public-key="pk_demo_123"></script>
+    <h1>Acme Coffee — Demo host page</h1>
+    <p>The launcher bubble should appear in the bottom-right corner.</p>
+
+    <script
+      src="../dist/helpdeck.js"
+      data-public-key="pk_demo_123"
+      data-color="#0d9488"
+      data-position="bottom-right"
+      data-api-url=""
+      defer
+    ></script>
   </body>
 </html>
