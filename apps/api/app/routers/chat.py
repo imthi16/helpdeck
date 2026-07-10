@@ -20,7 +20,7 @@ from app.agent.graph import build_agent_graph
 from app.agent.runner import build_dependencies
 from app.core.db import async_session_factory
 from app.core.logging import get_logger
-from app.models import Conversation, Message, MessageRole
+from app.models import Conversation, ConversationChannel, Message, MessageRole
 from app.schemas.chat import ChatRequest
 from app.services.cache import CachedAnswer, ResponseCache, compute_kb_version, get_redis
 from app.services.llm import LLMGateway
@@ -55,17 +55,19 @@ def _sse(event: str, payload: dict[str, Any]) -> ServerSentEvent:
 
 async def _ensure_conversation(
     sessionmaker: async_sessionmaker[AsyncSession],
-    request: ChatRequest,
+    org_id: uuid.UUID,
+    conversation_id: uuid.UUID | None,
+    channel: ConversationChannel,
 ) -> uuid.UUID:
     async with sessionmaker() as session:
-        if request.conversation_id is not None:
-            conversation = await session.get(Conversation, request.conversation_id)
-            if conversation is None or conversation.org_id != request.org_id:
+        if conversation_id is not None:
+            conversation = await session.get(Conversation, conversation_id)
+            if conversation is None or conversation.org_id != org_id:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND, detail="conversation not found"
                 )
             return conversation.id
-        conversation = Conversation(org_id=request.org_id, channel=request.channel)
+        conversation = Conversation(org_id=org_id, channel=channel)
         session.add(conversation)
         await session.commit()
         return conversation.id
@@ -125,29 +127,41 @@ async def _replay_cached(
     )
 
 
-@router.post("/chat")
-async def chat(
-    request: ChatRequest,
-    sessionmaker: Annotated[async_sessionmaker[AsyncSession], Depends(get_chat_sessionmaker)],
-    checkpointer: Annotated[Any, Depends(get_chat_checkpointer)],
-    gateway: Annotated[LLMGateway, Depends(get_chat_gateway)],
-    cache: Annotated[ResponseCache, Depends(get_chat_cache)],
+async def run_chat_stream(
+    *,
+    sessionmaker: async_sessionmaker[AsyncSession],
+    gateway: LLMGateway,
+    checkpointer: Any,
+    cache: ResponseCache,
+    org_id: uuid.UUID,
+    message: str,
+    conversation_id: uuid.UUID | None,
+    channel: ConversationChannel,
+    bypass_cache: bool = False,
+    debug: bool = False,
+    user_identifier: str | None = None,
 ) -> EventSourceResponse:
-    conversation_id = await _ensure_conversation(sessionmaker, request)
+    """Shared SSE chat turn used by the dashboard and widget endpoints."""
+    resolved_conversation_id = await _ensure_conversation(
+        sessionmaker, org_id, conversation_id, channel
+    )
+    if user_identifier and conversation_id is None:
+        async with sessionmaker() as session:
+            conversation = await session.get(Conversation, resolved_conversation_id)
+            if conversation is not None:
+                conversation.user_identifier = user_identifier
+                await session.commit()
+
     await _persist_message(
         sessionmaker,
-        org_id=request.org_id,
-        conversation_id=conversation_id,
+        org_id=org_id,
+        conversation_id=resolved_conversation_id,
         role=MessageRole.user,
-        content=request.message,
+        content=message,
     )
 
-    kb_version = await compute_kb_version(sessionmaker, request.org_id)
-    cached = (
-        None
-        if request.bypass_cache
-        else await cache.get(str(request.org_id), request.message, kb_version)
-    )
+    kb_version = await compute_kb_version(sessionmaker, org_id)
+    cached = None if bypass_cache else await cache.get(str(org_id), message, kb_version)
     headers = {
         "X-Accel-Buffering": "no",
         "X-HelpDeck-Cache": "hit" if cached is not None else "miss",
@@ -156,8 +170,8 @@ async def chat(
     if cached is not None:
         message_id = await _persist_message(
             sessionmaker,
-            org_id=request.org_id,
-            conversation_id=conversation_id,
+            org_id=org_id,
+            conversation_id=resolved_conversation_id,
             role=MessageRole.assistant,
             content=cached.content,
             citations=cached.citations,
@@ -165,7 +179,7 @@ async def chat(
             model_used=cached.model_used,
         )
         return EventSourceResponse(
-            _replay_cached(cached, conversation_id, message_id),
+            _replay_cached(cached, resolved_conversation_id, message_id),
             ping=HEARTBEAT_SECONDS,
             headers=headers,
         )
@@ -178,11 +192,11 @@ async def chat(
             deps = build_dependencies(sessionmaker=sessionmaker, gateway=gateway)
             graph = build_agent_graph(deps, checkpointer=checkpointer)
             initial = {
-                "org_id": str(request.org_id),
-                "conversation_id": str(conversation_id),
-                "question": request.message,
+                "org_id": str(org_id),
+                "conversation_id": str(resolved_conversation_id),
+                "question": message,
             }
-            config = {"configurable": {"thread_id": str(conversation_id)}}
+            config = {"configurable": {"thread_id": str(resolved_conversation_id)}}
 
             async for mode, data in graph.astream(
                 initial, config=config, stream_mode=["updates", "custom"]
@@ -211,8 +225,8 @@ async def chat(
             escalated = bool(final.get("escalated", False))
             message_id = await _persist_message(
                 sessionmaker,
-                org_id=request.org_id,
-                conversation_id=conversation_id,
+                org_id=org_id,
+                conversation_id=resolved_conversation_id,
                 role=MessageRole.assistant,
                 content=content,
                 citations=citations,
@@ -223,7 +237,7 @@ async def chat(
                 latency_ms=latency_ms,
             )
 
-            if request.debug:
+            if debug:
                 yield _sse(
                     "debug",
                     {
@@ -249,8 +263,8 @@ async def chat(
             # re-run the agent and record a fresh escalation row.
             if not escalated and content:
                 await cache.set(
-                    str(request.org_id),
-                    request.message,
+                    str(org_id),
+                    message,
                     kb_version,
                     CachedAnswer(
                         content=content,
@@ -268,14 +282,36 @@ async def chat(
                 "done",
                 {
                     "message_id": str(message_id),
-                    "conversation_id": str(conversation_id),
+                    "conversation_id": str(resolved_conversation_id),
                     "confidence": confidence,
                     "escalated": escalated,
                     "cached": False,
                 },
             )
         except Exception as exc:  # noqa: BLE001 - surface any failure as an SSE error
-            logger.exception("chat_stream_failed", conversation_id=str(conversation_id))
+            logger.exception("chat_stream_failed", conversation_id=str(resolved_conversation_id))
             yield _sse("error", {"detail": str(exc)})
 
     return EventSourceResponse(event_stream(), ping=HEARTBEAT_SECONDS, headers=headers)
+
+
+@router.post("/chat")
+async def chat(
+    request: ChatRequest,
+    sessionmaker: Annotated[async_sessionmaker[AsyncSession], Depends(get_chat_sessionmaker)],
+    checkpointer: Annotated[Any, Depends(get_chat_checkpointer)],
+    gateway: Annotated[LLMGateway, Depends(get_chat_gateway)],
+    cache: Annotated[ResponseCache, Depends(get_chat_cache)],
+) -> EventSourceResponse:
+    return await run_chat_stream(
+        sessionmaker=sessionmaker,
+        gateway=gateway,
+        checkpointer=checkpointer,
+        cache=cache,
+        org_id=request.org_id,
+        message=request.message,
+        conversation_id=request.conversation_id,
+        channel=request.channel,
+        bypass_cache=request.bypass_cache,
+        debug=request.debug,
+    )

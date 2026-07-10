@@ -78,6 +78,7 @@ class Message(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     tokens_in: Mapped[int | None] = mapped_column(Integer, nullable=True)
     tokens_out: Mapped[int | None] = mapped_column(Integer, nullable=True)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    feedback: Mapped[int | None] = mapped_column(Integer, nullable=True)  # -1 down, +1 up
 
 
 class Escalation(Base, UUIDPrimaryKeyMixin, TimestampMixin):

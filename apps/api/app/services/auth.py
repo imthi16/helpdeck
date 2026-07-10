@@ -8,7 +8,10 @@ from sqlalchemy.orm import selectinload
 
 from app.core.security import hash_password, verify_password
 from app.models import Membership, MembershipRole, Organization, User
+from app.models.tenancy import generate_public_key
 from app.schemas.auth import OrgMembership, UserResponse
+
+__all__ = ["generate_public_key"]
 
 
 class AuthError(Exception):
@@ -37,7 +40,7 @@ async def signup(
         raise EmailAlreadyExists(normalized)
 
     user = User(email=normalized, password_hash=hash_password(password), name=name)
-    org = Organization(name=org_name)
+    org = Organization(name=org_name, public_key=generate_public_key())
     session.add_all([user, org])
     await session.flush()
     session.add(Membership(org_id=org.id, user_id=user.id, role=MembershipRole.owner))
