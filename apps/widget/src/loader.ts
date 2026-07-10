@@ -82,7 +82,8 @@ function boot(): void {
     color: config.color,
     api: config.apiUrl,
   });
-  iframe.src = `${config.appUrl}?${params.toString()}`;
+  const frameSrc = `${config.appUrl}?${params.toString()}`;
+  let loaded = false;
   assign(iframe, {
     position: "fixed",
     bottom: "88px",
@@ -102,6 +103,11 @@ function boot(): void {
 
   const setOpen = (next: boolean): void => {
     open = next;
+    if (open && !loaded) {
+      // Lazy-load the app on first open so the host page load is untouched.
+      iframe.src = frameSrc;
+      loaded = true;
+    }
     iframe.style.setProperty("display", open ? "block" : "none", "important");
     launcher.setAttribute("aria-label", open ? "Close chat" : "Open chat");
     launcher.innerHTML = open ? "&#10005;" : "&#128172;";

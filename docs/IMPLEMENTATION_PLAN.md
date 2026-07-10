@@ -115,7 +115,7 @@
       *Verify:* `examples/demo.html` shows bubble; open/close works; host page styles never leak in (iframe isolation).
 - [x] **4.3 Widget chat UI.** Streaming messages, markdown, citation chips opening a source popover (doc title + snippet), "Talk to a human" button (→ escalation + confirmation state), thumbs up/down per answer, session persisted in `localStorage` so refresh keeps the conversation.
       *Verify:* full conversation flow on demo page against local API.
-- [ ] **4.4 Bundle budget + polish.** Code-split so `helpdeck.js` (loader) stays tiny and the iframe app carries the weight; loader ≤ 60KB gz hard limit (CI already enforces); async/defer safe; no globals leaked except `window.HelpDeck`.
+- [x] **4.4 Bundle budget + polish.** Code-split so `helpdeck.js` (loader) stays tiny and the iframe app carries the weight; loader ≤ 60KB gz hard limit (CI already enforces); async/defer safe; no globals leaked except `window.HelpDeck`.
       *Verify:* CI size check passes; Lighthouse on demo page shows no blocking impact.
 - [ ] **4.5 Widget E2E.** Playwright: load demo page → open widget → ask seeded question → cited streamed answer → thumbs-up recorded → out-of-KB question → escalation message.
       *Verify:* test green in CI.
