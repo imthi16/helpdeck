@@ -9,10 +9,11 @@ import asyncio
 import hashlib
 import math
 import re
-from typing import Protocol
+from typing import Any, Protocol
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
+from app.services.llm import ollama_reachable
 from app.services.tracing import get_langfuse
 
 logger = get_logger(__name__)
@@ -20,7 +21,9 @@ logger = get_logger(__name__)
 MAX_BATCH_SIZE = 100
 MAX_RETRIES = 3
 BASE_RETRY_DELAY_SECONDS = 0.5
-EMBEDDING_DIMS = 1536
+# Output width of the default OSS embedding model (nomic-embed-text via Ollama);
+# must match the chunks.embedding vector column (see the 768-dim migration).
+EMBEDDING_DIMS = 768
 
 
 class EmbeddingError(Exception):
@@ -40,6 +43,31 @@ class OpenAIEmbeddingProvider:
     async def embed(self, texts: list[str], model: str) -> list[list[float]]:
         response = await self._client.embeddings.create(model=model, input=texts)
         return [item.embedding for item in sorted(response.data, key=lambda d: d.index)]
+
+
+class OllamaEmbeddingProvider:
+    """Local, free embeddings served by Ollama, via the litellm gateway.
+
+    Model names are litellm-style, e.g. ``ollama/nomic-embed-text``. No API key
+    or extra SDK — litellm talks to Ollama over HTTP at ``api_base``.
+    """
+
+    def __init__(self, api_base: str) -> None:
+        self._api_base = api_base
+
+    @staticmethod
+    def _index(item: Any) -> int:
+        return item["index"] if isinstance(item, dict) else item.index
+
+    @staticmethod
+    def _vector(item: Any) -> list[float]:
+        return item["embedding"] if isinstance(item, dict) else item.embedding
+
+    async def embed(self, texts: list[str], model: str) -> list[list[float]]:
+        import litellm
+
+        response = await litellm.aembedding(model=model, input=texts, api_base=self._api_base)
+        return [self._vector(item) for item in sorted(response.data, key=self._index)]
 
 
 _TOKEN = re.compile(r"[a-z0-9]+")
@@ -72,7 +100,7 @@ class HashingEmbeddingProvider:
     Content tokens (stopwords dropped, lightly suffix-normalized) are hashed into
     ``dims`` buckets and the vector is L2-normalized, so cosine similarity
     approximates lexical overlap. Not a substitute for a real semantic model —
-    production uses OpenAI when ``OPENAI_API_KEY`` is set.
+    used only when neither Ollama nor an ``OPENAI_API_KEY`` is available.
     """
 
     def __init__(self, dims: int = EMBEDDING_DIMS) -> None:
@@ -97,7 +125,13 @@ def _default_provider() -> EmbeddingProvider:
     settings = get_settings()
     if settings.openai_api_key:
         return OpenAIEmbeddingProvider(settings.openai_api_key)
-    logger.warning("embeddings_offline_mode", reason="OPENAI_API_KEY unset; using hashing provider")
+    if ollama_reachable(settings.ollama_base_url):
+        logger.info("embeddings_ollama_mode", base_url=settings.ollama_base_url)
+        return OllamaEmbeddingProvider(settings.ollama_base_url)
+    logger.warning(
+        "embeddings_offline_mode",
+        reason="no OPENAI_API_KEY and Ollama unreachable; using hashing provider",
+    )
     return HashingEmbeddingProvider(EMBEDDING_DIMS)
 
 

@@ -19,7 +19,9 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
-EMBEDDING_DIMS = 1536
+# OSS embedding model width (nomic-embed-text via Ollama). Kept in sync with
+# app.services.embeddings.EMBEDDING_DIMS and the chunks.embedding column migration.
+EMBEDDING_DIMS = 768
 
 
 class DocumentSourceType(enum.StrEnum):

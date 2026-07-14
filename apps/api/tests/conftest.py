@@ -1,16 +1,23 @@
-import pytest
-from alembic.config import Config
-from sqlalchemy import text
-from sqlalchemy.engine import make_url
-from sqlalchemy.ext.asyncio import (
+import os
+
+# Tests must be deterministic and never depend on a live model server, so pin the
+# AI stack to the offline stubs regardless of the developer's shell env: an empty
+# OLLAMA_BASE_URL is treated as unreachable, and no provider key is set.
+os.environ["OLLAMA_BASE_URL"] = ""
+
+import pytest  # noqa: E402
+from alembic.config import Config  # noqa: E402
+from sqlalchemy import text  # noqa: E402
+from sqlalchemy.engine import make_url  # noqa: E402
+from sqlalchemy.ext.asyncio import (  # noqa: E402
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
 
-from alembic import command
-from app.core.config import get_settings
+from alembic import command  # noqa: E402
+from app.core.config import get_settings  # noqa: E402
 
 
 @pytest.fixture(scope="session")

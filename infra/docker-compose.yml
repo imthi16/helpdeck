@@ -34,6 +34,38 @@ services:
       timeout: 5s
       retries: 10
 
+  # Local, free, open-source LLM + embeddings. The app reaches this via
+  # OLLAMA_BASE_URL (litellm gateway). CPU-only by default; add a GPU runtime for
+  # speed. Models live in the named volume so they persist across restarts.
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # One-shot: pull the default models, then exit. Re-runs are no-ops (already
+  # present). Add a stronger model here (e.g. qwen2.5:7b) if you set
+  # LLM_STRONG_MODEL to it.
+  ollama-pull:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: "http://ollama:11434"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - "ollama pull llama3.2:3b && ollama pull nomic-embed-text"
+    restart: "no"
+
 volumes:
   postgres_data:
   redis_data:
+  ollama_data:

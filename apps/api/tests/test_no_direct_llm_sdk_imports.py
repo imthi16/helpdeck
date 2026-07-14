@@ -12,7 +12,8 @@ APP_DIR = Path(__file__).resolve().parents[1] / "app"
 
 # SDK import token -> modules (relative to app/) allowed to import it.
 ALLOWED = {
-    "litellm": {"services/llm.py"},
+    # embeddings.py is the embedding gateway; it uses litellm for the Ollama backend.
+    "litellm": {"services/llm.py", "services/embeddings.py"},
     "anthropic": {"services/llm.py"},
     # Embeddings have their own gateway module (plan 1.4); it owns the OpenAI SDK.
     "openai": {"services/llm.py", "services/embeddings.py"},

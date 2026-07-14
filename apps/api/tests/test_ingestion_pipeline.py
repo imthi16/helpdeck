@@ -17,13 +17,13 @@ from app.models import (
     DocumentStatus,
     Organization,
 )
+from app.services.embeddings import EMBEDDING_DIMS as EMBED_DIMS
 from app.services.embeddings import EmbeddingService
 from app.services.ingestion.pipeline import run_ingestion
 from app.services.storage import LocalFileStorage, document_key
 from app.workers.ingest import ingest_document
 
 FIXTURES = Path(__file__).parent / "fixtures"
-EMBED_DIMS = 1536
 
 Sessionmaker = async_sessionmaker[AsyncSession]
 

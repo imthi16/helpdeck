@@ -36,11 +36,21 @@ class Settings(BaseSettings):
     cookie_secure: bool = False
     cookie_domain: str | None = None
 
+    # LLM/embeddings default to a free, local, open-source stack served by Ollama
+    # (reached through the litellm gateway). Set ANTHROPIC/OPENAI keys and matching
+    # *_MODEL / EMBEDDING_MODEL values to use a hosted provider instead. When
+    # neither a key nor a reachable Ollama is present, deterministic offline stubs
+    # keep the app runnable (not real models).
     anthropic_api_key: str = ""
     openai_api_key: str = ""
-    embedding_model: str = "text-embedding-3-small"
-    llm_cheap_model: str = ""
-    llm_strong_model: str = ""
+    ollama_base_url: str = "http://localhost:11434"
+    embedding_model: str = "ollama/nomic-embed-text"
+    # Must match EMBEDDING_MODEL's output width (nomic-embed-text = 768).
+    embedding_dims: int = 768
+    llm_cheap_model: str = "ollama_chat/llama3.2:3b"
+    # Same small model by default (CPU-friendly); set to e.g. ollama_chat/qwen2.5:7b
+    # for stronger answers once that model is pulled.
+    llm_strong_model: str = "ollama_chat/llama3.2:3b"
     reranker: str = "none"
     cohere_api_key: str = ""
 
