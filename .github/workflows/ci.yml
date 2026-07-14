@@ -40,6 +40,24 @@ jobs:
         with:
           python-version: "3.12"
       - run: uv sync
+      # Provision the app login role out of band (the RLS migration never
+      # handles credentials). Mirrors infra/init/01-app-role.sql for dev.
+      - name: Provision helpdeck_app login role
+        env:
+          PGPASSWORD: helpdeck
+        run: |
+          psql -h localhost -p 5433 -U helpdeck -d helpdeck -v ON_ERROR_STOP=1 -c "
+          DO \$\$
+          BEGIN
+            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'helpdeck_app') THEN
+              CREATE ROLE helpdeck_app LOGIN PASSWORD 'helpdeck_app'
+                NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
+            ELSE
+              ALTER ROLE helpdeck_app LOGIN PASSWORD 'helpdeck_app'
+                NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
+            END IF;
+          END
+          \$\$;"
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run pytest -q

@@ -28,13 +28,26 @@ async def get_session() -> AsyncIterator[AsyncSession]:
 
 
 @asynccontextmanager
-async def tenant_session(org_id: uuid.UUID) -> AsyncIterator[AsyncSession]:
+async def tenant_session(
+    org_id: uuid.UUID,
+    *,
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
+) -> AsyncIterator[AsyncSession]:
     """An app-role session scoped to one tenant via ``app.current_tenant``.
 
-    Every query in the block is filtered by RLS to ``org_id``. The setting is
-    transaction-local, so it is discarded when the session closes.
+    The context manager owns a single transaction (``session.begin()``): the
+    tenant setting is applied transaction-locally and stays in effect for every
+    query in the block. On clean exit the transaction commits; on error it rolls
+    back. Callers must NOT commit inside the block — committing would end the
+    transaction and drop ``app.current_tenant``, leaving later queries unscoped
+    (they would then fail closed under RLS). Do all the work, then let the block
+    commit for you.
+
+    ``session_factory`` overrides the module-global app factory (used by tests
+    that need a loop-local engine); production callers omit it.
     """
-    async with app_session_factory() as session:
+    factory = session_factory or app_session_factory
+    async with factory() as session, session.begin():
         await session.execute(
             text("SELECT set_config('app.current_tenant', :tid, true)"),
             {"tid": str(org_id)},

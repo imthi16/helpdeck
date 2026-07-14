@@ -4,25 +4,27 @@ Revision ID: 51fe866934da
 Revises: bf1f6f4635af
 Create Date: 2026-07-11 09:52:31.310203
 
-Creates the non-superuser ``helpdeck_app`` role the application serves requests
-as, and enables FORCE row-level security with tenant-isolation policies on the
-tenant data tables. The app sets ``app.current_tenant`` per transaction; the
-superuser (migrations/seed/tests) bypasses RLS.
+Enables FORCE row-level security with tenant-isolation policies on the tenant
+data tables, and prepares the non-superuser ``helpdeck_app`` role the app serves
+requests as. The role's LOGIN/password is NOT handled here — it is provisioned
+out of band (docker-compose init in dev, deployment secret management in prod, a
+conftest fixture in tests) so no credential is ever emitted into migration SQL.
+The app sets ``app.current_tenant`` per transaction; the superuser
+(migrations/seed/tests) bypasses RLS.
 """
 
 from collections.abc import Sequence
 
-from sqlalchemy.engine import make_url
-
 from alembic import op
-from app.core.config import get_settings
 
 revision: str = "51fe866934da"
 down_revision: str | Sequence[str] | None = "bf1f6f4635af"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-# Tenant data tables scoped by org_id.
+# Tenant data tables scoped by org_id — also the only tables the app role is
+# granted access to (identity tables, alembic_version, and future tables stay
+# out of reach of a compromised app credential).
 RLS_TABLES = ("documents", "chunks", "conversations", "messages", "escalations")
 
 APP_ROLE = "helpdeck_app"
@@ -48,50 +50,33 @@ CHILD_PARENTS = (
 )
 
 
-def _app_password() -> str | None:
-    """The app role's password, derived from the deployment secret APP_DATABASE_URL.
-
-    We never bake a fixed credential into the migration: the role password is
-    whatever the operator configured for the app connection. If the role is
-    provisioned out of band (prod), ``CREATE ROLE`` below is skipped entirely.
-    """
-    return make_url(get_settings().app_database_url).password
-
-
 def upgrade() -> None:
     # --- app role -----------------------------------------------------------
-    password = _app_password()
-    if password is not None:
-        # Escape single quotes for the SQL string literal; the DO block uses a
-        # named dollar-quote tag so a "$$" in the password cannot break out.
-        login_clause = "LOGIN PASSWORD '" + password.replace("'", "''") + "'"
-    else:
-        # No password available (role expected to be provisioned externally);
-        # create a login role without a password rather than a known default.
-        login_clause = "LOGIN"
-
+    # Create the role WITHOUT login/password if it is missing (a NOLOGIN role is
+    # unusable until credentials are provisioned out of band — never a known
+    # default). If it already exists, do not trust its attributes: strip any
+    # SUPERUSER/BYPASSRLS/CREATEDB/CREATEROLE so a mis-provisioned role cannot
+    # silently defeat RLS. LOGIN/password are deliberately left untouched.
     op.execute(
         f"""
         DO $rolesetup$
         BEGIN
           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{APP_ROLE}') THEN
-            CREATE ROLE {APP_ROLE} {login_clause}
+            CREATE ROLE {APP_ROLE} NOLOGIN
               NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
           END IF;
         END
         $rolesetup$;
         """
     )
+    op.execute(f"ALTER ROLE {APP_ROLE} NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE")
+
+    # Explicit, minimal grants: schema usage plus CRUD on the tenant data tables
+    # only. No GRANT ... ON ALL TABLES and no ALTER DEFAULT PRIVILEGES, so the
+    # role gets nothing on alembic_version, identity tables, or any future table.
     op.execute(f"GRANT USAGE ON SCHEMA public TO {APP_ROLE}")
-    op.execute(f"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {APP_ROLE}")
-    op.execute(f"GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {APP_ROLE}")
-    op.execute(
-        "ALTER DEFAULT PRIVILEGES IN SCHEMA public "
-        f"GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {APP_ROLE}"
-    )
-    op.execute(
-        f"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO {APP_ROLE}"
-    )
+    for table in RLS_TABLES:
+        op.execute(f"GRANT SELECT, INSERT, UPDATE, DELETE ON {table} TO {APP_ROLE}")
 
     # --- keep tenant child rows tied to a parent in the SAME tenant ---------
     # FK referential-integrity checks bypass RLS, so a policy that only pins the
@@ -138,15 +123,7 @@ def downgrade() -> None:
     for parent in ("documents", "conversations"):
         op.execute(f"ALTER TABLE {parent} DROP CONSTRAINT IF EXISTS uq_{parent}_id_org")
 
-    op.execute(
-        "ALTER DEFAULT PRIVILEGES IN SCHEMA public "
-        f"REVOKE SELECT, INSERT, UPDATE, DELETE ON TABLES FROM {APP_ROLE}"
-    )
-    op.execute(
-        "ALTER DEFAULT PRIVILEGES IN SCHEMA public "
-        f"REVOKE USAGE, SELECT ON SEQUENCES FROM {APP_ROLE}"
-    )
-    op.execute(f"REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM {APP_ROLE}")
-    op.execute(f"REVOKE ALL ON ALL TABLES IN SCHEMA public FROM {APP_ROLE}")
+    for table in RLS_TABLES:
+        op.execute(f"REVOKE SELECT, INSERT, UPDATE, DELETE ON {table} FROM {APP_ROLE}")
     op.execute(f"REVOKE USAGE ON SCHEMA public FROM {APP_ROLE}")
     op.execute(f"DROP ROLE IF EXISTS {APP_ROLE}")

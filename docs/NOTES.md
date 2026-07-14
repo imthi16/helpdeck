@@ -4,14 +4,18 @@
 
 ### What landed (this PR: `feat/phase-5.1-rls`)
 
-- **`helpdeck_app` role** — a non-superuser, `NOBYPASSRLS` login role the app is meant
-  to serve requests as. Created idempotently in the migration.
+- **`helpdeck_app` role** — a non-superuser, `NOBYPASSRLS` role the app serves requests
+  as. The migration ensures it exists (as `NOLOGIN` when absent), normalizes its
+  privilege flags every run (`NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE`), and
+  grants only schema `USAGE` + CRUD on the five tenant tables. Its LOGIN/password is
+  provisioned out of band (see below), never by the migration.
 - **FORCE RLS + tenant-isolation policies** on the tenant *data* tables (`documents`,
   `chunks`, `conversations`, `messages`, `escalations`) using
-  `org_id = current_setting('app.current_tenant', true)::uuid` for both `USING` and
-  `WITH CHECK`.
-- **`tenant_session(org_id)`** in `app/core/db.py` — an app-role session that sets
-  `app.current_tenant` transaction-locally, plus an `app_engine`/`app_session_factory`.
+  `org_id = NULLIF(current_setting('app.current_tenant', true), '')::uuid` for both
+  `USING` and `WITH CHECK`.
+- **`tenant_session(org_id)`** in `app/core/db.py` — an app-role session that owns a
+  single transaction (`session.begin()`) and sets `app.current_tenant` transaction-local
+  for its whole lifetime, plus an `app_engine`/`app_session_factory`.
 - **Isolation tests** (`tests/test_rls.py`) — the Phase 5.1 Verify: an unscoped
   `SELECT * FROM documents` through the app role only returns the current tenant's rows;
   no tenant set fails closed (zero rows); the app role can't bypass RLS or `SET ROLE`
@@ -23,10 +27,23 @@ Migrations, `scripts/seed*.py`, and the test suite connect as the superuser `hel
 
 ### Review fixes (PR #2)
 
-- **No fixed app-role password in the migration.** The role is created only if it does
-  not already exist, and its password is derived from the deployment secret
-  (`APP_DATABASE_URL`) rather than a hardcoded default — so prod never ships a known
-  credential, and a role provisioned out of band is left untouched.
+- **No credentials in the migration.** The migration never sets a LOGIN or password, so
+  `alembic upgrade head --sql` can never leak a secret into migration previews/CI logs.
+  The login/password is provisioned out of band: `infra/init/01-app-role.sql` (dev
+  docker-compose), a CI step + a `conftest` `app_login` fixture (tests), and deployment
+  secret management (prod). If the role is absent the migration creates it `NOLOGIN`, so
+  there is never a usable default credential.
+- **Existing role not trusted.** `ALTER ROLE helpdeck_app NOSUPERUSER NOBYPASSRLS
+  NOCREATEDB NOCREATEROLE` runs unconditionally, so a role someone provisioned with
+  `SUPERUSER`/`BYPASSRLS` cannot silently defeat RLS.
+- **Least-privilege grants.** Only schema `USAGE` and CRUD on the five tenant tables —
+  no `GRANT ... ON ALL TABLES` and no `ALTER DEFAULT PRIVILEGES`, so `alembic_version`,
+  identity tables, and any future table (e.g. an append-only audit log) stay out of the
+  app credential's reach.
+- **Tenant scope survives the whole block.** `tenant_session` owns its transaction via
+  `session.begin()`, so the transaction-local `app.current_tenant` stays set for every
+  query. Callers must not commit inside the block (doing so would drop the setting and
+  make later queries fail closed); the block commits on clean exit.
 - **Fail-closed on pooled connections.** The policy predicate uses
   `NULLIF(current_setting('app.current_tenant', true), '')::uuid`: a pooled connection
   whose tenant was only ever set transaction-locally reverts to `''` (not `NULL`) after

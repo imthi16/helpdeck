@@ -7,7 +7,6 @@ role, which RLS is enforced against. Each test uses a loop-local app engine
 
 import uuid
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 
 import pytest
 from sqlalchemy import text
@@ -19,6 +18,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.core.config import get_settings
+from app.core.db import tenant_session
 from app.models import (
     Chunk,
     Document,
@@ -37,18 +37,16 @@ class AppDb:
     def session(self) -> AsyncSession:
         return self.factory()
 
-    @asynccontextmanager
-    async def tenant(self, org_id: uuid.UUID) -> AsyncIterator[AsyncSession]:
-        async with self.factory() as session:
-            await session.execute(
-                text("SELECT set_config('app.current_tenant', :tid, true)"),
-                {"tid": str(org_id)},
-            )
-            yield session
+    def tenant(self, org_id: uuid.UUID):
+        # Exercise the production helper (including its transaction ownership),
+        # passing the loop-local factory this test's engine is bound to.
+        return tenant_session(org_id, session_factory=self.factory)
 
 
 @pytest.fixture
-async def app_db() -> AsyncIterator[AppDb]:
+async def app_db(app_login: None) -> AsyncIterator[AppDb]:
+    # app_login provisions the app role's LOGIN/password (the migration no longer
+    # does — see conftest) so this engine can actually connect as helpdeck_app.
     engine = create_async_engine(get_settings().app_database_url)
     try:
         yield AppDb(async_sessionmaker(engine, expire_on_commit=False))
@@ -145,6 +143,7 @@ async def test_with_check_blocks_cross_tenant_write(
 ) -> None:
     org_a, org_b = two_orgs
     # Scoped to A, try to insert a row belonging to B -> WITH CHECK violation.
+    # tenant_session owns the transaction, so we never commit here.
     with pytest.raises((ProgrammingError, DBAPIError)):
         async with app_db.tenant(org_a) as session:
             await session.execute(
@@ -155,7 +154,6 @@ async def test_with_check_blocks_cross_tenant_write(
                 ),
                 {"org": str(org_b)},
             )
-            await session.commit()
 
 
 async def test_child_cannot_reference_cross_tenant_parent(
@@ -183,4 +181,3 @@ async def test_child_cannot_reference_cross_tenant_parent(
                 ),
                 {"a": str(org_a), "doc_b": str(doc_b)},
             )
-            await session.commit()
