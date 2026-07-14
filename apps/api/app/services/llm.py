@@ -17,7 +17,6 @@ import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from enum import StrEnum
-from functools import lru_cache
 from typing import Any, Protocol
 from urllib.parse import urlparse
 
@@ -28,23 +27,36 @@ from app.services.tracing import get_langfuse
 logger = get_logger(__name__)
 
 
-@lru_cache(maxsize=8)
+PROBE_FAILURE_TTL_SECONDS = 30.0
+# base_url -> (reachable, monotonic time after which a failed probe is retried)
+_probe_cache: dict[str, tuple[bool, float]] = {}
+
+
 def ollama_reachable(base_url: str) -> bool:
-    """Whether an Ollama server answers at ``base_url`` (cached per process).
+    """Whether an Ollama server answers at ``base_url``.
 
     Lets the app prefer local OSS models when Ollama is up and quietly fall back
     to the offline stubs when it is not (e.g. during tests) — no config toggle
-    needed. Cached, so it costs one short socket probe per process.
+    needed. A successful probe is cached for the life of the process; a failed
+    probe is retried after a short TTL, so a process that starts before Ollama
+    is healthy switches to it once it comes online.
     """
     if not base_url:
         return False
+    cached = _probe_cache.get(base_url)
+    if cached is not None:
+        reachable, retry_at = cached
+        if reachable or time.monotonic() < retry_at:
+            return reachable
     parsed = urlparse(base_url)
     host, port = parsed.hostname or "localhost", parsed.port or 11434
     try:
         with socket.create_connection((host, port), timeout=0.3):
-            return True
+            reachable = True
     except OSError:
-        return False
+        reachable = False
+    _probe_cache[base_url] = (reachable, time.monotonic() + PROBE_FAILURE_TTL_SECONDS)
+    return reachable
 
 
 class LLMRoute(StrEnum):

@@ -78,3 +78,14 @@ async def test_embed_query_returns_single_vector() -> None:
 
     assert len(vector) == 4
     assert provider.calls == [["hello"]]
+
+
+def test_embedding_dims_follow_settings() -> None:
+    """EMBEDDING_DIMS (vector column + hashing provider) comes from the setting,
+    so operators who change EMBEDDING_DIMS + migrate get matching widths."""
+    from app.core.config import get_settings
+    from app.models.knowledge import EMBEDDING_DIMS as MODEL_DIMS
+    from app.services.embeddings import EMBEDDING_DIMS as SERVICE_DIMS
+
+    assert SERVICE_DIMS == get_settings().embedding_dims
+    assert MODEL_DIMS == get_settings().embedding_dims

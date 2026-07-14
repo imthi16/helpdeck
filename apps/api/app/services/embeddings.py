@@ -21,9 +21,10 @@ logger = get_logger(__name__)
 MAX_BATCH_SIZE = 100
 MAX_RETRIES = 3
 BASE_RETRY_DELAY_SECONDS = 0.5
-# Output width of the default OSS embedding model (nomic-embed-text via Ollama);
-# must match the chunks.embedding vector column (see the 768-dim migration).
-EMBEDDING_DIMS = 768
+# Embedding vector width, from the EMBEDDING_DIMS setting (default 768 for
+# nomic-embed-text). Must match the chunks.embedding column width — changing it
+# requires a matching Alembic migration.
+EMBEDDING_DIMS = get_settings().embedding_dims
 
 
 class EmbeddingError(Exception):
