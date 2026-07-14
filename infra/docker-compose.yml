@@ -12,6 +12,9 @@ services:
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # Provisions the helpdeck_app login role (runs only on first init of the
+      # data volume). See init/01-app-role.sql.
+      - ./init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U helpdeck -d helpdeck"]
       interval: 5s

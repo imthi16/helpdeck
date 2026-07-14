@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     debug: bool = False
 
     database_url: str = "postgresql+asyncpg://helpdeck:helpdeck@localhost:5433/helpdeck"
+    # Non-superuser role the app serves requests as; RLS is enforced against it.
+    # Migrations/seed/tests use database_url (superuser, bypasses RLS).
+    app_database_url: str = "postgresql+asyncpg://helpdeck_app:helpdeck_app@localhost:5433/helpdeck"
     redis_url: str = "redis://localhost:6380/0"
 
     # Local filesystem storage for raw uploaded sources (object store in prod).

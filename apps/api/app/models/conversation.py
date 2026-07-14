@@ -2,7 +2,16 @@ import enum
 import uuid
 from typing import Any
 
-from sqlalchemy import Enum, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import (
+    Enum,
+    Float,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -34,6 +43,9 @@ class EscalationStatus(enum.StrEnum):
 
 class Conversation(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "conversations"
+    # Target for the composite (id, org_id) FKs from messages/escalations —
+    # keeps a child's parent conversation in the same tenant (FKs bypass RLS).
+    __table_args__ = (UniqueConstraint("id", "org_id", name="uq_conversations_id_org"),)
 
     org_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -55,6 +67,15 @@ class Conversation(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
 class Message(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "messages"
+    __table_args__ = (
+        # Composite FK: the parent conversation must share this message's org_id.
+        ForeignKeyConstraint(
+            ["conversation_id", "org_id"],
+            ["conversations.id", "conversations.org_id"],
+            ondelete="CASCADE",
+            name="messages_conversation_org_fkey",
+        ),
+    )
 
     org_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -64,7 +85,6 @@ class Message(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     conversation_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("conversations.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -83,6 +103,15 @@ class Message(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
 class Escalation(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "escalations"
+    __table_args__ = (
+        # Composite FK: the parent conversation must share this escalation's org_id.
+        ForeignKeyConstraint(
+            ["conversation_id", "org_id"],
+            ["conversations.id", "conversations.org_id"],
+            ondelete="CASCADE",
+            name="escalations_conversation_org_fkey",
+        ),
+    )
 
     org_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -92,7 +121,6 @@ class Escalation(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     conversation_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("conversations.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
