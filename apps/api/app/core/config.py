@@ -23,7 +23,12 @@ class Settings(BaseSettings):
     enable_internal_routes: bool = False
 
     # Agent thresholds
-    faithfulness_threshold: float = 0.7
+    # Escalate a grounded answer only when the faithfulness judge is quite unsure.
+    # Tuned for local OSS judge models (llama3.2/qwen2.5), which under-score terse
+    # but correct grounded answers; 0.7 caused frequent false escalations. Out-of-KB
+    # questions still escalate via the no-grounding path, independent of this value.
+    # Raise toward 0.7 when using a stronger hosted judge model.
+    faithfulness_threshold: float = 0.4
     agent_retrieval_top_n: int = 8
 
     # Response cache
