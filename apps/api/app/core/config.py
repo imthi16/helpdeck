@@ -47,10 +47,11 @@ class Settings(BaseSettings):
     embedding_model: str = "ollama/nomic-embed-text"
     # Must match EMBEDDING_MODEL's output width (nomic-embed-text = 768).
     embedding_dims: int = 768
+    # Cheap route (router/chitchat) stays small; the strong route (grounded answer
+    # + faithfulness judge) uses a larger model for better answers and fewer false
+    # escalations. Both are pulled by the compose ollama-pull service.
     llm_cheap_model: str = "ollama_chat/llama3.2:3b"
-    # Same small model by default (CPU-friendly); set to e.g. ollama_chat/qwen2.5:7b
-    # for stronger answers once that model is pulled.
-    llm_strong_model: str = "ollama_chat/llama3.2:3b"
+    llm_strong_model: str = "ollama_chat/qwen2.5:7b"
     reranker: str = "none"
     cohere_api_key: str = ""
 

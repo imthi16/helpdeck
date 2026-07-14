@@ -256,7 +256,7 @@ class LLMGateway:
         settings = get_settings()
         self._provider = provider or _default_provider()
         self._cheap_model = cheap_model or settings.llm_cheap_model or "ollama_chat/llama3.2:3b"
-        self._strong_model = strong_model or settings.llm_strong_model or "ollama_chat/llama3.2:3b"
+        self._strong_model = strong_model or settings.llm_strong_model or "ollama_chat/qwen2.5:7b"
 
     def model_for(self, route: LLMRoute) -> str:
         return self._strong_model if route == LLMRoute.strong else self._cheap_model

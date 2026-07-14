@@ -19,7 +19,7 @@ Execute `docs/IMPLEMENTATION_PLAN.md` strictly in order, one task at a time.
 
 - Backend: Python 3.12, FastAPI (async), SQLAlchemy 2 + Alembic, Pydantic v2, `uv` for deps
 - Agent: LangGraph 1.x, Postgres checkpointer; provider-agnostic LLM gateway in `app/services/llm.py`
-- LLM: default free/OSS via Ollama (`ollama_chat/llama3.2:3b`) through litellm; hosted Anthropic/OpenAI optional (set a key + matching `LLM_*_MODEL`). Offline stubs when neither is available.
+- LLM: default free/OSS via Ollama through litellm — cheap `ollama_chat/llama3.2:3b`, strong `ollama_chat/qwen2.5:7b`; hosted Anthropic/OpenAI optional (set a key + matching `LLM_*_MODEL`). Offline stubs when neither is available.
 - Data: Postgres 17 + pgvector (HNSW) + full-text `tsvector` (GIN); Redis 7 (cache, rate limits, `arq` job queue)
 - Retrieval: hybrid dense + BM25-style full-text → Reciprocal Rank Fusion → optional reranker
 - Embeddings: default free/OSS `ollama/nomic-embed-text` (768 dims) — pinned via `EMBEDDING_MODEL`/`EMBEDDING_DIMS`; must match the `chunks.embedding` column width

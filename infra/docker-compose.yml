@@ -50,8 +50,8 @@ services:
       retries: 20
 
   # One-shot: pull the default models, then exit. Re-runs are no-ops (already
-  # present). Add a stronger model here (e.g. qwen2.5:7b) if you set
-  # LLM_STRONG_MODEL to it.
+  # present). qwen2.5:7b (~4.7GB) backs the strong route; llama3.2:3b the cheap
+  # route; nomic-embed-text the embeddings. Trim this if you override the models.
   ollama-pull:
     image: ollama/ollama:latest
     depends_on:
@@ -62,7 +62,7 @@ services:
     entrypoint:
       - /bin/sh
       - -c
-      - "ollama pull llama3.2:3b && ollama pull nomic-embed-text"
+      - "ollama pull llama3.2:3b && ollama pull qwen2.5:7b && ollama pull nomic-embed-text"
     restart: "no"
 
 volumes:
