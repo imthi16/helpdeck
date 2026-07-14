@@ -3,7 +3,17 @@ import uuid
 from typing import Any
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Computed, Enum, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import (
+    Computed,
+    Enum,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -27,6 +37,9 @@ class DocumentStatus(enum.StrEnum):
 
 class Document(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "documents"
+    # Target for the composite (id, org_id) FK from chunks — keeps a chunk's
+    # parent document in the same tenant even though FK checks bypass RLS.
+    __table_args__ = (UniqueConstraint("id", "org_id", name="uq_documents_id_org"),)
 
     org_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -50,6 +63,13 @@ class Document(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 class Chunk(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "chunks"
     __table_args__ = (
+        # Composite FK: the parent document must share this chunk's org_id.
+        ForeignKeyConstraint(
+            ["document_id", "org_id"],
+            ["documents.id", "documents.org_id"],
+            ondelete="CASCADE",
+            name="chunks_document_org_fkey",
+        ),
         Index("ix_chunks_org_document", "org_id", "document_id"),
         Index(
             "ix_chunks_embedding_hnsw",
@@ -67,7 +87,6 @@ class Chunk(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     document_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("documents.id", ondelete="CASCADE"),
         nullable=False,
     )
     content: Mapped[str] = mapped_column(Text, nullable=False)

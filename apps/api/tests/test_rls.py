@@ -156,3 +156,31 @@ async def test_with_check_blocks_cross_tenant_write(
                 {"org": str(org_b)},
             )
             await session.commit()
+
+
+async def test_child_cannot_reference_cross_tenant_parent(
+    app_db: AppDb,
+    two_orgs: tuple[uuid.UUID, uuid.UUID],
+    db_sessionmaker: Sessionmaker,
+) -> None:
+    org_a, org_b = two_orgs
+    # Org B's document id, read as superuser (FK checks bypass RLS anyway).
+    async with db_sessionmaker() as session:
+        doc_b = await session.scalar(
+            text("SELECT id FROM documents WHERE org_id = :b"), {"b": str(org_b)}
+        )
+
+    # Scoped to A, a chunk with org_id=A that points at B's document passes
+    # WITH CHECK (own org_id is A) but the composite (document_id, org_id) FK
+    # rejects it: no documents row with (id=doc_b, org_id=A) exists.
+    with pytest.raises((ProgrammingError, DBAPIError)):
+        async with app_db.tenant(org_a) as session:
+            await session.execute(
+                text(
+                    "INSERT INTO chunks (id, org_id, document_id, content, metadata,"
+                    " token_count, created_at, updated_at) VALUES (gen_random_uuid(),"
+                    " :a, :doc_b, 'x', '{}', 1, now(), now())"
+                ),
+                {"a": str(org_a), "doc_b": str(doc_b)},
+            )
+            await session.commit()
