@@ -3,10 +3,10 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models import Chunk, Document, DocumentSourceType, DocumentStatus, Organization
+from app.services.embeddings import EMBEDDING_DIMS as EMBED_DIMS
 from app.services.embeddings import EmbeddingService
 from app.services.retrieval import HybridRetriever, reciprocal_rank_fusion
 
-EMBED_DIMS = 1536
 Sessionmaker = async_sessionmaker[AsyncSession]
 
 

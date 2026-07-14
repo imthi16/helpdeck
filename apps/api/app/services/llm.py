@@ -12,17 +12,51 @@ is not a substitute for a real model.
 """
 
 import re
+import socket
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Protocol
+from urllib.parse import urlparse
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.services.tracing import get_langfuse
 
 logger = get_logger(__name__)
+
+
+PROBE_FAILURE_TTL_SECONDS = 30.0
+# base_url -> (reachable, monotonic time after which a failed probe is retried)
+_probe_cache: dict[str, tuple[bool, float]] = {}
+
+
+def ollama_reachable(base_url: str) -> bool:
+    """Whether an Ollama server answers at ``base_url``.
+
+    Lets the app prefer local OSS models when Ollama is up and quietly fall back
+    to the offline stubs when it is not (e.g. during tests) — no config toggle
+    needed. A successful probe is cached for the life of the process; a failed
+    probe is retried after a short TTL, so a process that starts before Ollama
+    is healthy switches to it once it comes online.
+    """
+    if not base_url:
+        return False
+    cached = _probe_cache.get(base_url)
+    if cached is not None:
+        reachable, retry_at = cached
+        if reachable or time.monotonic() < retry_at:
+            return reachable
+    parsed = urlparse(base_url)
+    host, port = parsed.hostname or "localhost", parsed.port or 11434
+    try:
+        with socket.create_connection((host, port), timeout=0.3):
+            reachable = True
+    except OSError:
+        reachable = False
+    _probe_cache[base_url] = (reachable, time.monotonic() + PROBE_FAILURE_TTL_SECONDS)
+    return reachable
 
 
 class LLMRoute(StrEnum):
@@ -70,10 +104,16 @@ class LLMProvider(Protocol):
 
 
 class LiteLLMProvider:
-    """Real provider-agnostic backend (Anthropic, OpenAI, ...) via litellm."""
+    """Real provider-agnostic backend (Ollama, Anthropic, OpenAI, ...) via litellm.
 
-    def __init__(self, api_key: str | None = None) -> None:
+    ``api_base`` targets a self-hosted endpoint (e.g. Ollama at
+    ``http://localhost:11434``); ``api_key`` is used for hosted providers. Ollama
+    needs neither a key nor any extra SDK.
+    """
+
+    def __init__(self, api_key: str | None = None, *, api_base: str | None = None) -> None:
         self._api_key = api_key
+        self._api_base = api_base
 
     def _kwargs(self, model: str, messages: list[LLMMessage], **kwargs: Any) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -83,6 +123,8 @@ class LiteLLMProvider:
         }
         if self._api_key:
             payload["api_key"] = self._api_key
+        if self._api_base:
+            payload["api_base"] = self._api_base
         return payload
 
     async def complete(
@@ -206,7 +248,12 @@ def _default_provider() -> LLMProvider:
     settings = get_settings()
     if settings.anthropic_api_key or settings.openai_api_key:
         return LiteLLMProvider(settings.anthropic_api_key or settings.openai_api_key or None)
-    logger.warning("llm_offline_mode", reason="no LLM API key set; using offline provider")
+    if ollama_reachable(settings.ollama_base_url):
+        logger.info("llm_ollama_mode", base_url=settings.ollama_base_url)
+        return LiteLLMProvider(api_base=settings.ollama_base_url)
+    logger.warning(
+        "llm_offline_mode", reason="no LLM API key and Ollama unreachable; using offline provider"
+    )
     return OfflineGroundedProvider()
 
 
@@ -220,8 +267,8 @@ class LLMGateway:
     ) -> None:
         settings = get_settings()
         self._provider = provider or _default_provider()
-        self._cheap_model = cheap_model or settings.llm_cheap_model or "claude-haiku-4-5-20251001"
-        self._strong_model = strong_model or settings.llm_strong_model or "claude-sonnet-5"
+        self._cheap_model = cheap_model or settings.llm_cheap_model or "ollama_chat/llama3.2:3b"
+        self._strong_model = strong_model or settings.llm_strong_model or "ollama_chat/qwen2.5:7b"
 
     def model_for(self, route: LLMRoute) -> str:
         return self._strong_model if route == LLMRoute.strong else self._cheap_model

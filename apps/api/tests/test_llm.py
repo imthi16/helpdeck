@@ -1,7 +1,9 @@
-from collections.abc import AsyncIterator
+import time
+from collections.abc import AsyncIterator, Iterator
 
 import pytest
 
+from app.services import llm as llm_module
 from app.services.llm import (
     LLMError,
     LLMGateway,
@@ -9,6 +11,7 @@ from app.services.llm import (
     LLMRoute,
     LLMUsage,
     OfflineGroundedProvider,
+    ollama_reachable,
 )
 
 
@@ -119,3 +122,60 @@ async def test_offline_grounded_answer_refuses_without_context() -> None:
         "m", [LLMMessage("system", "grounded"), LLMMessage("user", "no context here")]
     )
     assert "don't have enough information" in text
+
+
+class _FakeConnection:
+    def __enter__(self) -> "_FakeConnection":
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+
+@pytest.fixture
+def probe_url() -> Iterator[str]:
+    url = "http://ollama-probe-test:11434"
+    llm_module._probe_cache.pop(url, None)
+    yield url
+    llm_module._probe_cache.pop(url, None)
+
+
+def test_ollama_probe_failure_cached_within_ttl(monkeypatch, probe_url) -> None:
+    attempts: list[str] = []
+
+    def refuse(*args: object, **kwargs: object) -> None:
+        attempts.append("probe")
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(llm_module.socket, "create_connection", refuse)
+
+    assert ollama_reachable(probe_url) is False
+    assert ollama_reachable(probe_url) is False
+    assert attempts == ["probe"]
+
+
+def test_ollama_probe_failure_retried_after_ttl(monkeypatch, probe_url) -> None:
+    monkeypatch.setattr(
+        llm_module.socket, "create_connection", lambda *a, **k: (_ for _ in ()).throw(OSError())
+    )
+    assert ollama_reachable(probe_url) is False
+
+    # Expire the failure entry, then bring "Ollama" up: the probe must run again.
+    llm_module._probe_cache[probe_url] = (False, time.monotonic() - 1)
+    monkeypatch.setattr(llm_module.socket, "create_connection", lambda *a, **k: _FakeConnection())
+
+    assert ollama_reachable(probe_url) is True
+
+
+def test_ollama_probe_success_cached(monkeypatch, probe_url) -> None:
+    attempts: list[str] = []
+
+    def accept(*args: object, **kwargs: object) -> _FakeConnection:
+        attempts.append("probe")
+        return _FakeConnection()
+
+    monkeypatch.setattr(llm_module.socket, "create_connection", accept)
+
+    assert ollama_reachable(probe_url) is True
+    assert ollama_reachable(probe_url) is True
+    assert attempts == ["probe"]

@@ -17,9 +17,13 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.core.config import get_settings
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
-EMBEDDING_DIMS = 1536
+# Embedding vector width, from the EMBEDDING_DIMS setting (default 768 for
+# nomic-embed-text). Must match EMBEDDING_MODEL's output width and the
+# chunks.embedding column migration.
+EMBEDDING_DIMS = get_settings().embedding_dims
 
 
 class DocumentSourceType(enum.StrEnum):

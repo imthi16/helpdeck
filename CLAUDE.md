@@ -19,9 +19,10 @@ Execute `docs/IMPLEMENTATION_PLAN.md` strictly in order, one task at a time.
 
 - Backend: Python 3.12, FastAPI (async), SQLAlchemy 2 + Alembic, Pydantic v2, `uv` for deps
 - Agent: LangGraph 1.x, Postgres checkpointer; provider-agnostic LLM gateway in `app/services/llm.py`
+- LLM: default free/OSS via Ollama through litellm — cheap `ollama_chat/llama3.2:3b`, strong `ollama_chat/qwen2.5:7b`; hosted Anthropic/OpenAI optional (set a key + matching `LLM_*_MODEL`). Offline stubs when neither is available.
 - Data: Postgres 17 + pgvector (HNSW) + full-text `tsvector` (GIN); Redis 7 (cache, rate limits, `arq` job queue)
 - Retrieval: hybrid dense + BM25-style full-text → Reciprocal Rank Fusion → optional reranker
-- Embeddings: `text-embedding-3-small` (1536 dims) — pinned via `EMBEDDING_MODEL` env var
+- Embeddings: default free/OSS `ollama/nomic-embed-text` (768 dims) — pinned via `EMBEDDING_MODEL`/`EMBEDDING_DIMS`; must match the `chunks.embedding` column width
 - Frontend: Next.js 16 App Router, TypeScript strict, Tailwind, shadcn/ui, `pnpm`
 - Widget: Preact + Vite, single bundle ≤ 60KB gzipped, rendered in an iframe
 - Streaming: SSE via `sse-starlette` (NOT WebSockets)
@@ -71,8 +72,8 @@ uv run python eval/run_eval.py                        # RAGAS report + threshold
 
 Defined in `.env` (never committed). ALWAYS update `.env.example` when adding one.
 
-`DATABASE_URL`, `REDIS_URL`, `JWT_SECRET`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
-`EMBEDDING_MODEL`, `LLM_CHEAP_MODEL`, `LLM_STRONG_MODEL`, `RERANKER` (none|cohere|bge),
+`DATABASE_URL`, `REDIS_URL`, `JWT_SECRET`, `OLLAMA_BASE_URL`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+`EMBEDDING_MODEL`, `EMBEDDING_DIMS`, `LLM_CHEAP_MODEL`, `LLM_STRONG_MODEL`, `RERANKER` (none|cohere|bge),
 `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST`, `ALLOWED_ORIGINS`
 
 ## Architecture at a glance
