@@ -176,7 +176,7 @@
       *Verify:* a trivial PR flows through preview → merge → prod automatically.
 - [x] **7.3 Public demo org.** *(mechanics shipped: read-only guard + nightly reset; prod seeding is a runbook step)* Seed script for prod: fictional company "Northwind Coffee Supply" with rich docs; demo mode = read-only KB, rate-limited, auto-reset nightly. Landing page embeds the live widget against it.
       *Verify:* incognito visitor can chat with the demo instantly.
-- [ ] **7.4 Landing page.** Hero (pitch + live widget), 4–6 feature cards (grounded answers, citations, guardrails, escalation, analytics, self-hostable), architecture section, honest "Status" note, GitHub link.
+- [x] **7.4 Landing page.** Hero (pitch + live widget), 4–6 feature cards (grounded answers, citations, guardrails, escalation, analytics, self-hostable), architecture section, honest "Status" note, GitHub link.
       *Verify:* Lighthouse ≥ 90 performance/accessibility; mobile clean.
 - [ ] **7.5 Flagship README.** Order: one-line pitch → live demo link + 30s GIF → problem → architecture diagram (mermaid, committed as image too) → features → stack badges → quickstart (`docker compose up` path, < 10 min) → **eval results table (real RAGAS scores)** → roadmap link → honest status badge ("MVP live — WhatsApp channel in progress") → license.
       *Verify:* a fresh clone by-the-README reaches a working playground in < 10 min.
