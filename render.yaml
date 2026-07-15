@@ -1,0 +1,64 @@
+# Render Blueprint (task 7.1) — API web service + arq worker from one image.
+# Deploying: create a Blueprint in the Render dashboard pointing at this repo,
+# then fill the env-var group secrets. Full runbook: docs/deploy.md.
+#
+# Postgres lives on Neon (pgvector) and Redis on Upstash, so neither is
+# declared here — only their URLs, provided as secrets.
+
+services:
+  - type: web
+    name: helpdeck-api
+    runtime: docker
+    dockerfilePath: apps/api/Dockerfile
+    dockerContext: apps/api
+    plan: starter
+    healthCheckPath: /health
+    # Migrations run before every deploy goes live (superuser DATABASE_URL).
+    preDeployCommand: uv run --no-sync alembic upgrade head
+    envVars:
+      - fromGroup: helpdeck-secrets
+      - key: COOKIE_SECURE
+        value: "true"
+
+  - type: worker
+    name: helpdeck-worker
+    runtime: docker
+    dockerfilePath: apps/api/Dockerfile
+    dockerContext: apps/api
+    plan: starter
+    dockerCommand: uv run --no-sync arq app.workers.main.WorkerSettings
+    envVars:
+      - fromGroup: helpdeck-secrets
+
+envVarGroups:
+  - name: helpdeck-secrets
+    envVars:
+      # Set these in the Render dashboard after the blueprint is created.
+      - key: DATABASE_URL
+        sync: false # Neon owner connection (runs migrations)
+      - key: APP_DATABASE_URL
+        sync: false # helpdeck_app restricted role (serves requests)
+      - key: REDIS_URL
+        sync: false # Upstash rediss:// URL
+      - key: JWT_SECRET
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false # or OPENAI_API_KEY — prod needs a hosted LLM (no Ollama)
+      - key: LLM_CHEAP_MODEL
+        sync: false # e.g. claude-haiku-4-5-20251001
+      - key: LLM_STRONG_MODEL
+        sync: false # e.g. claude-sonnet-5
+      - key: EMBEDDING_MODEL
+        sync: false # must match chunks.embedding dims — see docs/deploy.md
+      - key: EMBEDDING_DIMS
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false # https://<your-vercel-domain>
+      - key: WEB_BASE_URL
+        sync: false
+      - key: LANGFUSE_PUBLIC_KEY
+        sync: false
+      - key: LANGFUSE_SECRET_KEY
+        sync: false
+      - key: LANGFUSE_HOST
+        sync: false
