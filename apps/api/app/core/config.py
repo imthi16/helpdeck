@@ -67,6 +67,8 @@ class Settings(BaseSettings):
     allowed_origins: str = "http://localhost:3000"
     # Dashboard base URL — used to build invite links shown in the members UI.
     web_base_url: str = "http://localhost:3000"
+    # Optional webhook (Slack-compatible {"text": ...}) for quality alerts.
+    alert_webhook_url: str = ""
 
 
 @lru_cache
