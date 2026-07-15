@@ -1,0 +1,37 @@
+# CD (task 7.2): merge to main -> tests already ran on the PR (branch
+# protection + ci.yml/eval.yml) -> trigger Render deploys for API + worker.
+# Vercel deploys the dashboard via its own Git integration (production on
+# main, previews on PRs) — no workflow code needed for the web app.
+#
+# The workflow is committed but INERT until the RENDER_DEPLOY_HOOK_* secrets
+# exist (see docs/deploy.md §4). Job-level `if:` cannot read secrets, so the
+# guard maps them to env and checks at step level.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      RENDER_DEPLOY_HOOK_API: ${{ secrets.RENDER_DEPLOY_HOOK_API }}
+      RENDER_DEPLOY_HOOK_WORKER: ${{ secrets.RENDER_DEPLOY_HOOK_WORKER }}
+    steps:
+      - name: Trigger Render deploy (API)
+        if: env.RENDER_DEPLOY_HOOK_API != ''
+        run: curl -fsS "$RENDER_DEPLOY_HOOK_API" > /dev/null && echo "API deploy triggered"
+
+      - name: Trigger Render deploy (worker)
+        if: env.RENDER_DEPLOY_HOOK_WORKER != ''
+        run: curl -fsS "$RENDER_DEPLOY_HOOK_WORKER" > /dev/null && echo "Worker deploy triggered"
+
+      - name: No-op notice
+        if: env.RENDER_DEPLOY_HOOK_API == ''
+        run: echo "RENDER_DEPLOY_HOOK_API secret unset — skipping deploy (see docs/deploy.md)"

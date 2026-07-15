@@ -172,7 +172,7 @@
 
 - [x] **7.1 Production deploy.** *(prepared: image, blueprint, runbook — live deploy pending platform accounts)* Web → Vercel; API + arq worker → Railway (or Render); DB → Neon (pgvector enabled); Redis → Upstash. Secrets via platform env. Run migrations on deploy. Document every step in `docs/deploy.md` with the ~$15–40/mo cost table.
       *Verify:* live URLs respond; widget on a static test page works against prod API.
-- [ ] **7.2 CD pipeline.** GitHub Actions: on merge to main → tests + eval gate → build → deploy api/web; Vercel preview deploys on PRs.
+- [x] **7.2 CD pipeline.** *(prepared: workflow inert until deploy-hook secrets exist)* GitHub Actions: on merge to main → tests + eval gate → build → deploy api/web; Vercel preview deploys on PRs.
       *Verify:* a trivial PR flows through preview → merge → prod automatically.
 - [ ] **7.3 Public demo org.** Seed script for prod: fictional company "Northwind Coffee Supply" with rich docs; demo mode = read-only KB, rate-limited, auto-reset nightly. Landing page embeds the live widget against it.
       *Verify:* incognito visitor can chat with the demo instantly.
