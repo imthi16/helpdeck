@@ -46,3 +46,7 @@ storage/
 # E2E ingest storage
 apps/api/.e2e-storage/
 apps/api/.e2e-widget-storage/
+
+# Eval run reports (latest.json is committed deliberately for the README)
+eval/reports/*
+!eval/reports/latest.json

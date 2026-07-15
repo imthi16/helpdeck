@@ -9,6 +9,7 @@ from app.models.conversation import (
     Message,
     MessageRole,
 )
+from app.models.eval_run import EvalRun
 from app.models.knowledge import (
     Chunk,
     Document,
@@ -27,6 +28,7 @@ __all__ = [
     "DocumentSourceType",
     "DocumentStatus",
     "Escalation",
+    "EvalRun",
     "EscalationStatus",
     "ApiKey",
     "ApiKeyType",
