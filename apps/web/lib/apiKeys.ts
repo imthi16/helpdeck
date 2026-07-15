@@ -33,3 +33,19 @@ export function createApiKey(name: string, keyType: ApiKeyType): Promise<Created
 export function revokeApiKey(id: string): Promise<ApiKeyItem> {
   return api<ApiKeyItem>(`/api/v1/keys/${id}`, { method: "DELETE" });
 }
+
+export interface AuditLogEntry {
+  id: number;
+  actor_user_id: string | null;
+  actor_type: string;
+  action: string;
+  target_type: string | null;
+  target_id: string | null;
+  payload: Record<string, unknown>;
+  ip: string | null;
+  created_at: string;
+}
+
+export function listAuditLogs(limit = 50): Promise<AuditLogEntry[]> {
+  return api<AuditLogEntry[]>(`/api/v1/audit-logs?limit=${limit}`);
+}

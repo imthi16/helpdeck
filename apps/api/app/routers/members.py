@@ -32,6 +32,14 @@ from app.schemas.members import (
     RoleUpdateRequest,
 )
 from app.services import members as members_service
+from app.services.audit import (
+    INVITE_REVOKED,
+    MEMBER_INVITED,
+    MEMBER_JOINED,
+    MEMBER_REMOVED,
+    MEMBER_ROLE_CHANGED,
+    record_audit,
+)
 
 router = APIRouter(prefix="/api/v1/members", tags=["members"])
 
@@ -98,6 +106,7 @@ async def change_member_role(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="member not found")
         _require_manages(caller, target.role)
         _require_manages(caller, payload.role)
+        old_role = target.role
         try:
             await members_service.change_role(session, target, payload.role)
         except members_service.LastOwnerError as exc:
@@ -105,6 +114,15 @@ async def change_member_role(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="the organization must keep at least one owner",
             ) from exc
+        await record_audit(
+            session,
+            org_id=caller.org_id,
+            actor_user_id=caller.user.id,
+            action=MEMBER_ROLE_CHANGED,
+            target_type="user",
+            target_id=str(user_id),
+            payload={"from": old_role.value, "to": payload.role.value},
+        )
         await session.commit()
         rows = await members_service.list_members(session, caller.org_id)
     for m, u in rows:
@@ -123,6 +141,7 @@ async def remove_member(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="member not found")
         if user_id != caller.user.id:
             _require_manages(caller, target.role)
+        removed_role = target.role
         try:
             await members_service.remove_member(session, target)
         except members_service.LastOwnerError as exc:
@@ -130,6 +149,15 @@ async def remove_member(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="the organization must keep at least one owner",
             ) from exc
+        await record_audit(
+            session,
+            org_id=caller.org_id,
+            actor_user_id=caller.user.id,
+            action=MEMBER_REMOVED,
+            target_type="user",
+            target_id=str(user_id),
+            payload={"role": removed_role.value},
+        )
         await session.commit()
 
 
@@ -157,6 +185,15 @@ async def create_invite(
             **_to_invite_response(invitation).model_dump(),
             invite_url=f"{get_settings().web_base_url.rstrip('/')}/invite/{token}",
         )
+        await record_audit(
+            session,
+            org_id=caller.org_id,
+            actor_user_id=caller.user.id,
+            action=MEMBER_INVITED,
+            target_type="invitation",
+            target_id=str(invitation.id),
+            payload={"email": invitation.email, "role": invitation.role.value},
+        )
         await session.commit()
     return response
 
@@ -170,6 +207,15 @@ async def revoke_invite(
         target = next((i for i in invites if i.id == invite_id), None)
         if target is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="invite not found")
+        await record_audit(
+            session,
+            org_id=caller.org_id,
+            actor_user_id=caller.user.id,
+            action=INVITE_REVOKED,
+            target_type="invitation",
+            target_id=str(target.id),
+            payload={"email": target.email},
+        )
         await session.delete(target)
         await session.commit()
 
@@ -198,6 +244,15 @@ async def accept_invite(
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT, detail="already a member"
             ) from exc
+        await record_audit(
+            session,
+            org_id=created.org_id,
+            actor_user_id=current_user.id,
+            action=MEMBER_JOINED,
+            target_type="user",
+            target_id=str(current_user.id),
+            payload={"role": created.role.value, "via": "invite"},
+        )
         await session.commit()
         rows = await members_service.list_members(session, created.org_id)
     for m, u in rows:

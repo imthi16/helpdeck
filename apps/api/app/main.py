@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from app.routers import (
+    audit,
     auth,
     chat,
     conversations,
@@ -75,6 +76,7 @@ def create_app() -> FastAPI:
     application.include_router(auth.router)
     application.include_router(members.router)
     application.include_router(keys.router)
+    application.include_router(audit.router)
     application.include_router(onboarding.router)
     application.include_router(documents.router)
     application.include_router(conversations.router)

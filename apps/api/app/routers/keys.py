@@ -11,6 +11,7 @@ from app.core.deps import MembershipContext, require_role
 from app.models import ApiKey, MembershipRole
 from app.schemas.api_keys import ApiKeyCreatedResponse, ApiKeyCreateRequest, ApiKeyResponse
 from app.services import api_keys as keys_service
+from app.services.audit import KEY_CREATED, KEY_REVOKED, record_audit
 
 router = APIRouter(prefix="/api/v1/keys", tags=["keys"])
 
@@ -57,6 +58,15 @@ async def create_key(
     async with tenant_session(caller.org_id, session_factory=sessionmaker) as session:
         session.add(key)
         await session.flush()
+        await record_audit(
+            session,
+            org_id=caller.org_id,
+            actor_user_id=caller.user.id,
+            action=KEY_CREATED,
+            target_type="api_key",
+            target_id=str(key.id),
+            payload={"name": key.name, "key_type": key.key_type},
+        )
         response = ApiKeyCreatedResponse(**_to_response(key).model_dump(), token=token)
     return response
 
@@ -69,4 +79,13 @@ async def revoke_key(
         key = await keys_service.revoke_key(session, caller.org_id, key_id)
         if key is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="key not found")
+        await record_audit(
+            session,
+            org_id=caller.org_id,
+            actor_user_id=caller.user.id,
+            action=KEY_REVOKED,
+            target_type="api_key",
+            target_id=str(key.id),
+            payload={"name": key.name, "key_type": key.key_type},
+        )
         return _to_response(key)
