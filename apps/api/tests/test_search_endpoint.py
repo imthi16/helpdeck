@@ -36,7 +36,7 @@ async def seeded_org(
         corpus_dir=CORPUS_DIR,
         org_name=f"seed-test-{uuid.uuid4()}",
     )
-    assert summary.document_count == 8
+    assert summary.document_count == 16
     assert summary.chunk_count > 0
     try:
         yield summary.org_id, storage
