@@ -7,7 +7,6 @@ Origin allowlist, and requests are rate limited per key and per IP.
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sse_starlette.sse import EventSourceResponse
 
@@ -20,6 +19,7 @@ from app.routers.chat import (
     run_chat_stream,
 )
 from app.schemas.widget import WidgetChatRequest, WidgetConfig, WidgetFeedbackRequest
+from app.services.api_keys import resolve_key, touch_last_used
 from app.services.cache import ResponseCache
 from app.services.llm import LLMGateway
 from app.services.rate_limit import RateLimiter
@@ -47,12 +47,25 @@ def get_widget_rate_limiter(request: Request) -> RateLimiter | None:
 async def _org_for_key(
     sessionmaker: async_sessionmaker[AsyncSession], public_key: str | None
 ) -> Organization:
+    """Resolve the org for an X-Public-Key header via the api_keys table.
+
+    Since 5.3 the key must be an unrevoked ``api_keys`` row (looked up through
+    the SECURITY DEFINER resolve function — no tenant is known yet). The
+    ``last_used_at`` bump is throttled in Redis so this path stays read-only.
+    """
     if not public_key:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="missing public key")
+    cache = get_chat_cache()
+    redis_client = getattr(cache, "_client", None)
     async with sessionmaker() as session:
-        org = await session.scalar(
-            select(Organization).where(Organization.public_key == public_key)
-        )
+        resolved = await resolve_key(session, public_key)
+        if resolved is None or resolved.key_type != "widget":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid public key"
+            )
+        await touch_last_used(session, resolved.key_id, redis_client)
+        await session.commit()
+        org = await session.get(Organization, resolved.org_id)
     if org is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid public key")
     return org
@@ -67,12 +80,12 @@ def _check_origin(org: Organization, origin: str | None) -> None:
 
 
 async def _enforce_rate_limit(
-    limiter: RateLimiter | None, org: Organization, request: Request
+    limiter: RateLimiter | None, public_key: str, request: Request
 ) -> None:
     if limiter is None:
         return
     ip = request.client.host if request.client else "unknown"
-    for identifier in (f"key:{org.public_key}", f"ip:{ip}"):
+    for identifier in (f"key:{public_key}", f"ip:{ip}"):
         result = await limiter.hit(identifier)
         if not result.allowed:
             raise HTTPException(
@@ -96,7 +109,7 @@ async def widget_config(
 ) -> WidgetConfig:
     org = await _org_for_key(sessionmaker, x_public_key)
     _check_origin(org, origin)
-    await _enforce_rate_limit(limiter, org, request)
+    await _enforce_rate_limit(limiter, x_public_key or "", request)
     return WidgetConfig(
         org_name=org.name,
         welcome_message=org.widget_welcome_message,
@@ -117,7 +130,7 @@ async def widget_chat(
 ) -> EventSourceResponse:
     org = await _org_for_key(sessionmaker, x_public_key)
     _check_origin(org, origin)
-    await _enforce_rate_limit(limiter, org, request)
+    await _enforce_rate_limit(limiter, x_public_key or "", request)
 
     checkpointer = get_chat_checkpointer(request)
     return await run_chat_stream(
@@ -145,7 +158,7 @@ async def widget_feedback(
 ) -> None:
     org = await _org_for_key(sessionmaker, x_public_key)
     _check_origin(org, origin)
-    await _enforce_rate_limit(limiter, org, request)
+    await _enforce_rate_limit(limiter, x_public_key or "", request)
 
     async with tenant_session(org.id, session_factory=sessionmaker) as session:
         message = await session.get(Message, payload.message_id)

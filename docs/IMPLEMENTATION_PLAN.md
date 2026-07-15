@@ -132,7 +132,7 @@
       *Verify:* isolation tests — org A session querying org B rows gets zero results even with a deliberately unscoped query; app role cannot bypass.
 - [x] **5.2 RBAC enforcement.** FastAPI dependency `require_role(...)`: owner (billing/delete org/keys), admin (KB, members, settings), agent (conversations/escalations), viewer (read-only). Members page in web: invite by email (token link), change role, remove.
       *Verify:* matrix test — each role against each sensitive endpoint returns expected 200/403.
-- [ ] **5.3 API keys.** `api_keys` table (hashed secret, public widget key, scopes, last_used_at); settings page to create/reveal-once/revoke; widget key = the Phase 4 public key, now real; secret keys for future server-to-server use.
+- [x] **5.3 API keys.** `api_keys` table (hashed secret, public widget key, scopes, last_used_at); settings page to create/reveal-once/revoke; widget key = the Phase 4 public key, now real; secret keys for future server-to-server use.
       *Verify:* revoked key immediately 401s; `last_used_at` updates.
 - [ ] **5.4 Audit log.** Append-only `audit_logs` (no RLS; superuser-insert via SECURITY DEFINER function or dedicated writer): auth events, member/role changes, key create/revoke, document delete, settings changes. Read-only viewer in Settings for owners/admins.
       *Verify:* actions above produce rows; rows cannot be updated/deleted by app role.

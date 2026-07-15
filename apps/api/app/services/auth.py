@@ -2,14 +2,15 @@
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.security import hash_password, verify_password
-from app.models import Membership, MembershipRole, Organization, User
+from app.models import ApiKeyType, Membership, MembershipRole, Organization, User
 from app.models.tenancy import generate_public_key
 from app.schemas.auth import OrgMembership, UserResponse
+from app.services import api_keys
 
 __all__ = ["generate_public_key"]
 
@@ -64,6 +65,20 @@ async def signup(
         session.add_all([user, org])
         await session.flush()
         session.add(Membership(org_id=org.id, user_id=user.id, role=MembershipRole.owner))
+        # The org's widget key lives in api_keys (5.3). That table is RLS'd, so
+        # scope this transaction to the new org before inserting (works under
+        # the app role; a superuser test session is unaffected).
+        await session.execute(
+            text("SELECT set_config('app.current_tenant', :tid, true)"), {"tid": str(org.id)}
+        )
+        widget_key, _ = api_keys.build_key(
+            org_id=org.id,
+            name="Widget key",
+            key_type=ApiKeyType.widget,
+            created_by=user.id,
+            token=org.public_key,
+        )
+        session.add(widget_key)
     await session.commit()
     await session.refresh(user)
     return user

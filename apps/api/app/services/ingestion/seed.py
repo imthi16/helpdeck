@@ -13,7 +13,8 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models import Chunk, Document, DocumentSourceType, DocumentStatus, Organization
+from app.models import ApiKeyType, Chunk, Document, DocumentSourceType, DocumentStatus, Organization
+from app.services import api_keys
 from app.services.embeddings import EmbeddingService
 from app.services.ingestion.pipeline import run_ingestion
 from app.services.storage import ContentStorage, document_key
@@ -47,6 +48,16 @@ async def _reset_org(
         if public_key is not None:
             org.public_key = public_key
         session.add(org)
+        await session.flush()
+        # Widget auth reads api_keys since 5.3; mirror the org key there.
+        # (Seeding runs as the superuser, so RLS does not apply here.)
+        widget_key, _ = api_keys.build_key(
+            org_id=org.id,
+            name="Widget key",
+            key_type=ApiKeyType.widget,
+            token=org.public_key,
+        )
+        session.add(widget_key)
         await session.commit()
         return org.id
 

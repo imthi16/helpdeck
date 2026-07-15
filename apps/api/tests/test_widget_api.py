@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.main import app
 from app.models import (
+    ApiKeyType,
     Conversation,
     ConversationChannel,
     Message,
@@ -13,6 +14,7 @@ from app.models import (
     Organization,
 )
 from app.routers.widget import get_widget_rate_limiter, get_widget_sessionmaker
+from app.services import api_keys
 from app.services.cache import get_redis
 from app.services.rate_limit import RateLimiter
 
@@ -36,6 +38,12 @@ async def _make_org(sm: Sessionmaker, *, public_key: str, allowed_origins: str =
             widget_color="#123456",
         )
         session.add(org)
+        await session.flush()
+        # Widget auth reads api_keys since 5.3; mirror the org key there.
+        widget_key, _ = api_keys.build_key(
+            org_id=org.id, name="Widget key", key_type=ApiKeyType.widget, token=public_key
+        )
+        session.add(widget_key)
         await session.commit()
         return org.id
 

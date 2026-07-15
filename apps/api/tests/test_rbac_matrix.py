@@ -131,6 +131,13 @@ MATRIX = [
     ),
     ("GET", "/api/v1/members/invites", None, MembershipRole.admin),
     ("PATCH", "/members/{agent}", {"role": "viewer"}, MembershipRole.admin),
+    ("GET", "/api/v1/keys", None, MembershipRole.owner),
+    (
+        "POST",
+        "/api/v1/keys",
+        {"name": "ci", "key_type": "secret"},
+        MembershipRole.owner,
+    ),
 ]
 
 _RANK = {r: i for i, r in enumerate(reversed(ROLES))}
