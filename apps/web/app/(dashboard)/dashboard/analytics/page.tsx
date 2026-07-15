@@ -29,7 +29,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { ApiError } from "@/lib/api";
-import { fetchAnalyticsOverview, type AnalyticsOverview } from "@/lib/analytics";
+import {
+  fetchAnalyticsOverview,
+  fetchQuality,
+  type AnalyticsOverview,
+  type Quality,
+} from "@/lib/analytics";
 
 // Series color validated for both themes (dataviz palette slot 1).
 const SERIES_LIGHT = "#2a78d6";
@@ -72,6 +77,7 @@ function StatTile({ label, value, hint }: { label: string; value: string; hint?:
 export default function AnalyticsPage() {
   const [days, setDays] = useState<(typeof WINDOWS)[number]>(30);
   const [data, setData] = useState<AnalyticsOverview | null>(null);
+  const [quality, setQuality] = useState<Quality | null>(null);
   const [error, setError] = useState<string | null>(null);
   const isDark = useIsDark();
 
@@ -88,6 +94,20 @@ export default function AnalyticsPage() {
       active = false;
     };
   }, [days]);
+
+  useEffect(() => {
+    let active = true;
+    fetchQuality()
+      .then((payload) => {
+        if (active) setQuality(payload);
+      })
+      .catch(() => {
+        // Quality card stays hidden when eval data is unavailable.
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const series = isDark ? SERIES_DARK : SERIES_LIGHT;
   const perDay = (data?.conversations_per_day ?? []).map((d) => ({
@@ -199,6 +219,46 @@ export default function AnalyticsPage() {
           </div>
         </CardContent>
       </Card>
+
+      {quality?.latest ? (
+        <Card data-testid="quality-card">
+          <CardHeader>
+            <CardTitle>Answer quality</CardTitle>
+            <CardDescription>
+              Latest eval run ({quality.latest.kind}, {quality.latest.item_count} items,{" "}
+              {new Date(quality.latest.created_at).toLocaleDateString()}) — see docs/observability
+              for how these are measured.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <dl className="grid grid-cols-2 gap-y-1 text-sm md:grid-cols-4">
+              {Object.entries(quality.latest.metrics)
+                .filter(([, value]) => typeof value === "number")
+                .slice(0, 8)
+                .map(([name, value]) => (
+                  <div key={name}>
+                    <dt className="text-muted-foreground">{name.replaceAll("_", " ")}</dt>
+                    <dd className="text-lg font-semibold tabular-nums">
+                      {typeof value === "number" && value <= 1
+                        ? value.toFixed(2)
+                        : String(value)}
+                    </dd>
+                  </div>
+                ))}
+            </dl>
+            {quality.trend.length > 1 ? (
+              <p className="mt-3 text-xs text-muted-foreground">
+                Trend (faithfulness where judged):{" "}
+                {quality.trend
+                  .map((run) => run.metrics.faithfulness ?? run.metrics.faithfulness_mean)
+                  .filter((value): value is number => typeof value === "number")
+                  .map((value) => value.toFixed(2))
+                  .join(" → ") || "no judged runs yet"}
+              </p>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Card>
         <CardHeader>

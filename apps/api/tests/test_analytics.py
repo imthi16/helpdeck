@@ -192,3 +192,39 @@ def test_cluster_questions_groups_by_similarity() -> None:
         question="How do refunds work?", count=2, last_seen="2026-07-15T00:00:02"
     )
     assert clusters[1].count == 1
+
+
+async def test_quality_endpoint_returns_latest_eval_run(
+    seeded_traffic, db_sessionmaker: Sessionmaker
+) -> None:
+    from app.models import EvalRun
+
+    _, headers, _ = seeded_traffic
+    async with db_sessionmaker() as session:
+        session.add(
+            EvalRun(
+                kind="ci",
+                dataset="golden:fast",
+                item_count=30,
+                metrics={"context_recall": 0.92, "citation_validity": 1.0},
+                thresholds={"context_recall": 0.7},
+                passed=True,
+            )
+        )
+        await session.commit()
+
+    try:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/api/v1/analytics/quality", headers=headers)
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["latest"]["kind"] == "ci"
+        assert payload["latest"]["metrics"]["context_recall"] == pytest.approx(0.92)
+        assert payload["trend"], "trend should include the seeded run"
+    finally:
+        async with db_sessionmaker() as session:
+            from sqlalchemy import delete
+
+            await session.execute(delete(EvalRun).where(EvalRun.kind == "ci"))
+            await session.commit()

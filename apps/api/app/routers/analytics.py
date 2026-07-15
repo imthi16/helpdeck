@@ -5,10 +5,12 @@ from typing import Annotated
 import redis.asyncio as redis
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.db import app_session_factory, tenant_sessionmaker
 from app.core.deps import MembershipDep
+from app.models import EvalRun
 from app.services.analytics import AnalyticsOverview, compute_overview
 from app.services.cache import get_redis
 from app.services.embeddings import EmbeddingService
@@ -82,3 +84,57 @@ async def analytics_overview(
         redis_client=redis_client,
     )
     return _to_response(overview)
+
+
+class QualityRunResponse(BaseModel):
+    kind: str
+    dataset: str
+    item_count: int
+    metrics: dict
+    created_at: str
+
+
+class QualityResponse(BaseModel):
+    latest: QualityRunResponse | None
+    trend: list[QualityRunResponse]
+
+
+@router.get("/quality", response_model=QualityResponse)
+async def analytics_quality(
+    membership: MembershipDep,
+    sessionmaker: Annotated[async_sessionmaker[AsyncSession], Depends(get_analytics_sessionmaker)],
+) -> QualityResponse:
+    """Latest eval metrics + trend (task 6.6). eval_runs is platform-level
+    (no tenant data), readable by any authenticated member."""
+
+    def to_response(run: EvalRun) -> QualityRunResponse:
+        return QualityRunResponse(
+            kind=run.kind,
+            dataset=run.dataset,
+            item_count=run.item_count,
+            metrics=run.metrics,
+            created_at=run.created_at.isoformat(),
+        )
+
+    async with sessionmaker() as session:
+        latest = (
+            (
+                await session.execute(
+                    select(EvalRun)
+                    .where(EvalRun.kind.in_(("ci", "nightly", "local")))
+                    .order_by(EvalRun.created_at.desc())
+                    .limit(1)
+                )
+            )
+            .scalars()
+            .first()
+        )
+        trend_rows = (
+            (await session.execute(select(EvalRun).order_by(EvalRun.created_at.desc()).limit(14)))
+            .scalars()
+            .all()
+        )
+    return QualityResponse(
+        latest=to_response(latest) if latest else None,
+        trend=[to_response(run) for run in reversed(trend_rows)],
+    )

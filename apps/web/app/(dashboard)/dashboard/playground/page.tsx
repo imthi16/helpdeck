@@ -144,9 +144,17 @@ export default function PlaygroundPage() {
                   <dd>{debug.intent ?? "—"}</dd>
                   <dt className="text-muted-foreground">Model</dt>
                   <dd className="truncate">{debug.model ?? "—"}</dd>
-                  <dt className="text-muted-foreground">Confidence</dt>
-                  <dd data-testid="debug-confidence">
+                  <dt className="text-muted-foreground">Faithfulness</dt>
+                  <dd data-testid="debug-confidence" title="Judge score: every claim supported?">
                     {debug.confidence != null ? debug.confidence.toFixed(2) : "—"}
+                  </dd>
+                  <dt className="text-muted-foreground">Trace</dt>
+                  <dd
+                    className="truncate font-mono text-xs"
+                    data-testid="debug-trace"
+                    title="Langfuse trace id"
+                  >
+                    {debug.trace_id ?? "—"}
                   </dd>
                   <dt className="text-muted-foreground">Latency</dt>
                   <dd>{debug.latency_ms} ms</dd>
