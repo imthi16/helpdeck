@@ -12,6 +12,7 @@ from app.models import MembershipRole, Organization
 from app.schemas.auth import UserResponse
 from app.services.audit import SETTINGS_UPDATED, record_audit
 from app.services.auth import load_user_response
+from app.services.demo import block_demo_writes
 
 router = APIRouter(prefix="/api/v1/onboarding", tags=["onboarding"])
 
@@ -26,7 +27,7 @@ def get_onboarding_sessionmaker() -> async_sessionmaker[AsyncSession]:
     return app_session_factory
 
 
-@router.post("/complete", response_model=UserResponse)
+@router.post("/complete", response_model=UserResponse, dependencies=[Depends(block_demo_writes)])
 async def complete_onboarding(
     payload: CompleteOnboardingRequest,
     sessionmaker: Annotated[async_sessionmaker[AsyncSession], Depends(get_onboarding_sessionmaker)],

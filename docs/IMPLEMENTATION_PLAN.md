@@ -174,7 +174,7 @@
       *Verify:* live URLs respond; widget on a static test page works against prod API.
 - [x] **7.2 CD pipeline.** *(prepared: workflow inert until deploy-hook secrets exist)* GitHub Actions: on merge to main → tests + eval gate → build → deploy api/web; Vercel preview deploys on PRs.
       *Verify:* a trivial PR flows through preview → merge → prod automatically.
-- [ ] **7.3 Public demo org.** Seed script for prod: fictional company "Northwind Coffee Supply" with rich docs; demo mode = read-only KB, rate-limited, auto-reset nightly. Landing page embeds the live widget against it.
+- [x] **7.3 Public demo org.** *(mechanics shipped: read-only guard + nightly reset; prod seeding is a runbook step)* Seed script for prod: fictional company "Northwind Coffee Supply" with rich docs; demo mode = read-only KB, rate-limited, auto-reset nightly. Landing page embeds the live widget against it.
       *Verify:* incognito visitor can chat with the demo instantly.
 - [ ] **7.4 Landing page.** Hero (pitch + live widget), 4–6 feature cards (grounded answers, citations, guardrails, escalation, analytics, self-hostable), architecture section, honest "Status" note, GitHub link.
       *Verify:* Lighthouse ≥ 90 performance/accessibility; mobile clean.

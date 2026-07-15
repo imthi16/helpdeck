@@ -20,6 +20,7 @@ from app.core.deps import MembershipDep, require_role
 from app.models import Chunk, Document, DocumentSourceType, DocumentStatus, MembershipRole
 from app.schemas.document import DocumentCreate, DocumentResponse
 from app.services.audit import DOCUMENT_DELETED, record_audit
+from app.services.demo import block_demo_writes
 from app.services.queue import ArqIngestQueue, IngestQueue
 from app.services.storage import ContentStorage, document_key, get_storage
 
@@ -57,7 +58,9 @@ StorageDep = Annotated[ContentStorage, Depends(get_documents_storage)]
 QueueDep = Annotated[IngestQueue, Depends(get_ingest_queue)]
 OrgDep = Annotated[uuid.UUID, Depends(current_org_id)]
 # KB mutations are admin+; reads are any member (RBAC matrix, task 5.2).
+# The public demo org is read-only (task 7.3).
 admin_required = Depends(require_role(MembershipRole.admin))
+demo_guard = Depends(block_demo_writes)
 
 
 def _to_response(document: Document, chunk_count: int) -> DocumentResponse:
@@ -112,7 +115,7 @@ async def get_document(
     "/upload",
     response_model=DocumentResponse,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[admin_required],
+    dependencies=[admin_required, demo_guard],
 )
 async def upload_document(
     sessionmaker: SessionmakerDep,
@@ -155,7 +158,7 @@ async def upload_document(
     "",
     response_model=DocumentResponse,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[admin_required],
+    dependencies=[admin_required, demo_guard],
 )
 async def create_document(
     payload: DocumentCreate,
@@ -190,7 +193,9 @@ async def create_document(
 
 
 @router.post(
-    "/{document_id}/reindex", response_model=DocumentResponse, dependencies=[admin_required]
+    "/{document_id}/reindex",
+    response_model=DocumentResponse,
+    dependencies=[admin_required, demo_guard],
 )
 async def reindex_document(
     document_id: uuid.UUID,
@@ -212,7 +217,9 @@ async def reindex_document(
 
 
 @router.delete(
-    "/{document_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[admin_required]
+    "/{document_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[admin_required, demo_guard],
 )
 async def delete_document(
     document_id: uuid.UUID,

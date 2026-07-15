@@ -40,6 +40,7 @@ from app.services.audit import (
     MEMBER_ROLE_CHANGED,
     record_audit,
 )
+from app.services.demo import block_demo_writes
 
 router = APIRouter(prefix="/api/v1/members", tags=["members"])
 
@@ -51,6 +52,7 @@ def get_members_sessionmaker() -> async_sessionmaker[AsyncSession]:
 
 SessionmakerDep = Annotated[async_sessionmaker[AsyncSession], Depends(get_members_sessionmaker)]
 AdminDep = Annotated[MembershipContext, Depends(require_role(MembershipRole.admin))]
+demo_guard = Depends(block_demo_writes)  # the public demo org is read-only (7.3)
 
 
 def _require_manages(caller: MembershipContext, target_role: MembershipRole) -> None:
@@ -93,7 +95,7 @@ async def list_members(
     return [_to_member_response(m, u) for m, u in rows]
 
 
-@router.patch("/{user_id}", response_model=MemberResponse)
+@router.patch("/{user_id}", response_model=MemberResponse, dependencies=[demo_guard])
 async def change_member_role(
     user_id: uuid.UUID,
     payload: RoleUpdateRequest,
@@ -131,7 +133,7 @@ async def change_member_role(
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="member not found")
 
 
-@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[demo_guard])
 async def remove_member(
     user_id: uuid.UUID, sessionmaker: SessionmakerDep, caller: AdminDep
 ) -> None:
@@ -168,7 +170,12 @@ async def list_invites(sessionmaker: SessionmakerDep, caller: AdminDep) -> list[
     return [_to_invite_response(invitation) for invitation in invites]
 
 
-@router.post("/invites", response_model=InviteCreatedResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/invites",
+    response_model=InviteCreatedResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[demo_guard],
+)
 async def create_invite(
     payload: InviteCreateRequest, sessionmaker: SessionmakerDep, caller: AdminDep
 ) -> InviteCreatedResponse:
@@ -198,7 +205,9 @@ async def create_invite(
     return response
 
 
-@router.delete("/invites/{invite_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/invites/{invite_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[demo_guard]
+)
 async def revoke_invite(
     invite_id: uuid.UUID, sessionmaker: SessionmakerDep, caller: AdminDep
 ) -> None:
