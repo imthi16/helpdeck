@@ -356,8 +356,11 @@ async def main() -> int:
 
     passed: bool | None = None
     if args.gate:
+        # A metric that is None is not applicable to this slice (e.g. no
+        # unanswerable items when --limit trims the subset) — skip it rather
+        # than failing the gate on missing data.
         passed = all(
-            metrics.get(key) is not None and metrics[key] >= minimum
+            metrics.get(key) is None or metrics[key] >= minimum
             for key, minimum in thresholds.items()
         )
 

@@ -1,0 +1,129 @@
+# Quality gate (task 6.4).
+#
+# PR gate: runs the 30-item fast subset with deterministic metrics only and
+# FAILS the check below thresholds (context_recall >= 0.70, refusal_accuracy
+# >= 0.90, citation_validity >= 0.85 — the deterministic stand-in for judged
+# faithfulness: a weakened grounded prompt stops citing and fails it). Judged
+# RAGAS faithfulness with a 3B CPU judge is too noisy to block PRs honestly.
+#
+# Nightly: the full 125-item golden set including RAGAS-judged faithfulness /
+# answer_relevancy, warn-only while a baseline accumulates in eval_runs
+# (enforce later by adding --gate --min-faithfulness <baseline - 0.05>).
+#
+# Ollama runs on the runner host (not a service container) so actions/cache
+# can persist ~/.ollama/models (~2.3 GB: llama3.2:3b + nomic-embed-text).
+name: Eval
+
+on:
+  pull_request:
+    paths:
+      - "apps/api/app/agent/**"
+      - "apps/api/app/services/retrieval.py"
+      - "apps/api/app/services/reranker.py"
+      - "apps/api/app/services/embeddings.py"
+      - "apps/api/app/services/llm.py"
+      - "eval/**"
+      - ".github/workflows/eval.yml"
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+env:
+  DATABASE_URL: postgresql+asyncpg://helpdeck:helpdeck@localhost:5433/helpdeck
+  APP_DATABASE_URL: postgresql+asyncpg://helpdeck_app:helpdeck_app@localhost:5433/helpdeck
+  REDIS_URL: redis://localhost:6380/0
+  OLLAMA_BASE_URL: http://localhost:11434
+  # CPU prefill of the grounded prompt dominates; the 3B model keeps the
+  # 30-item gate inside the job timeout without changing what is measured.
+  LLM_STRONG_MODEL: ollama_chat/llama3.2:3b
+  LLM_CHEAP_MODEL: ollama_chat/llama3.2:3b
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ github.event_name == 'pull_request' && 60 || 300 }}
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: helpdeck
+          POSTGRES_PASSWORD: helpdeck
+          POSTGRES_DB: helpdeck
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U helpdeck -d helpdeck"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6380:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv sync --group eval
+      - name: Provision helpdeck_app login role
+        env:
+          PGPASSWORD: helpdeck
+        run: |
+          psql -h localhost -p 5433 -U helpdeck -d helpdeck -v ON_ERROR_STOP=1 -c "
+          DO \$\$
+          BEGIN
+            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'helpdeck_app') THEN
+              CREATE ROLE helpdeck_app LOGIN PASSWORD 'helpdeck_app'
+                NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
+            ELSE
+              ALTER ROLE helpdeck_app LOGIN PASSWORD 'helpdeck_app'
+                NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
+            END IF;
+          END
+          \$\$;"
+      - run: uv run alembic upgrade head
+
+      - name: Cache Ollama models
+        uses: actions/cache@v4
+        with:
+          path: ~/.ollama/models
+          key: ollama-models-v1-llama3.2-3b-nomic
+
+      - name: Install and start Ollama
+        working-directory: .
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          (ollama serve &) && sleep 5
+          ollama pull llama3.2:3b
+          ollama pull nomic-embed-text
+
+      - name: PR fast gate (deterministic metrics)
+        if: github.event_name == 'pull_request'
+        working-directory: .
+        run: |
+          uv run --project apps/api --group eval python eval/run_eval.py \
+            --subset fast --no-ragas --gate --kind ci
+
+      - name: Nightly full run (RAGAS, warn-only)
+        if: github.event_name != 'pull_request'
+        working-directory: .
+        run: |
+          uv run --project apps/api --group eval python eval/run_eval.py \
+            --subset full --ragas --kind nightly
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report-${{ github.run_id }}
+          path: eval/reports/*.json
+          if-no-files-found: ignore
