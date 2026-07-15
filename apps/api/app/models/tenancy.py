@@ -1,8 +1,9 @@
+import datetime
 import enum
 import secrets
 import uuid
 
-from sqlalchemy import Boolean, Enum, ForeignKey, String, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -78,3 +79,36 @@ class Membership(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     organization: Mapped["Organization"] = relationship(back_populates="memberships")
     user: Mapped["User"] = relationship(back_populates="memberships")
+
+
+class Invitation(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """A pending invite to join an org, redeemed via a copyable token link.
+
+    Identity-lane table (no RLS): acceptance happens before the accepting user
+    has any membership, so a tenant-keyed policy could never match. Only the
+    sha256 of the token is stored; the full invite URL is shown exactly once
+    at creation time. The email is advisory (shown in the members list) — with
+    no SMTP there is nothing to verify it against, so redemption is possession
+    of the link.
+    """
+
+    __tablename__ = "invitations"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    email: Mapped[str] = mapped_column(String(320), nullable=False)
+    role: Mapped[MembershipRole] = mapped_column(
+        Enum(MembershipRole, name="membership_role"), nullable=False
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    invited_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    expires_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    accepted_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )

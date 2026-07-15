@@ -32,18 +32,38 @@ async def signup(
     email: str,
     password: str,
     name: str,
-    org_name: str,
+    org_name: str | None = None,
+    invite_token: str | None = None,
 ) -> User:
+    """Create a user plus either a new org (owner) or an invited membership.
+
+    With ``invite_token`` the user joins the inviting org at the invited role
+    and no org is created; ``org_name`` is required otherwise. Raises
+    ``members.InvalidInvitation`` for a bad/expired token.
+    """
+    from app.services import members as members_service
+
     normalized = email.strip().lower()
     existing = await session.scalar(select(User).where(User.email == normalized))
     if existing is not None:
         raise EmailAlreadyExists(normalized)
 
+    invitation = None
+    if invite_token is not None:
+        invitation = await members_service.resolve_invitation(session, invite_token)
+
     user = User(email=normalized, password_hash=hash_password(password), name=name)
-    org = Organization(name=org_name, public_key=generate_public_key())
-    session.add_all([user, org])
-    await session.flush()
-    session.add(Membership(org_id=org.id, user_id=user.id, role=MembershipRole.owner))
+    if invitation is not None:
+        session.add(user)
+        await session.flush()
+        await members_service.accept_invitation(session, invitation, user.id)
+    else:
+        if not org_name:
+            raise AuthError("org_name required without an invite")
+        org = Organization(name=org_name, public_key=generate_public_key())
+        session.add_all([user, org])
+        await session.flush()
+        session.add(Membership(org_id=org.id, user_id=user.id, role=MembershipRole.owner))
     await session.commit()
     await session.refresh(user)
     return user

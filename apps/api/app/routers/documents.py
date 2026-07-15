@@ -16,9 +16,8 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.db import app_session_factory, tenant_session
-from app.models import Chunk, Document, DocumentSourceType, DocumentStatus
-from app.routers.auth import get_current_user
-from app.schemas.auth import UserResponse
+from app.core.deps import MembershipDep, require_role
+from app.models import Chunk, Document, DocumentSourceType, DocumentStatus, MembershipRole
 from app.schemas.document import DocumentCreate, DocumentResponse
 from app.services.queue import ArqIngestQueue, IngestQueue
 from app.services.storage import ContentStorage, document_key, get_storage
@@ -48,18 +47,16 @@ def get_ingest_queue(request: Request) -> IngestQueue:
     return ArqIngestQueue(pool)
 
 
-def current_org_id(
-    current_user: Annotated[UserResponse, Depends(get_current_user)],
-) -> uuid.UUID:
-    if not current_user.memberships:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="no organization")
-    return current_user.memberships[0].org_id
+def current_org_id(membership: MembershipDep) -> uuid.UUID:
+    return membership.org_id
 
 
 SessionmakerDep = Annotated[async_sessionmaker[AsyncSession], Depends(get_documents_sessionmaker)]
 StorageDep = Annotated[ContentStorage, Depends(get_documents_storage)]
 QueueDep = Annotated[IngestQueue, Depends(get_ingest_queue)]
 OrgDep = Annotated[uuid.UUID, Depends(current_org_id)]
+# KB mutations are admin+; reads are any member (RBAC matrix, task 5.2).
+admin_required = Depends(require_role(MembershipRole.admin))
 
 
 def _to_response(document: Document, chunk_count: int) -> DocumentResponse:
@@ -110,7 +107,12 @@ async def get_document(
     return _to_response(document, count or 0)
 
 
-@router.post("/upload", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/upload",
+    response_model=DocumentResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[admin_required],
+)
 async def upload_document(
     sessionmaker: SessionmakerDep,
     storage: StorageDep,
@@ -148,7 +150,12 @@ async def upload_document(
         return _to_response(document, 0)
 
 
-@router.post("", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=DocumentResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[admin_required],
+)
 async def create_document(
     payload: DocumentCreate,
     sessionmaker: SessionmakerDep,
@@ -181,7 +188,9 @@ async def create_document(
         return _to_response(document, 0)
 
 
-@router.post("/{document_id}/reindex", response_model=DocumentResponse)
+@router.post(
+    "/{document_id}/reindex", response_model=DocumentResponse, dependencies=[admin_required]
+)
 async def reindex_document(
     document_id: uuid.UUID,
     sessionmaker: SessionmakerDep,
@@ -201,7 +210,9 @@ async def reindex_document(
     return _to_response(document, count or 0)
 
 
-@router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{document_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[admin_required]
+)
 async def delete_document(
     document_id: uuid.UUID,
     sessionmaker: SessionmakerDep,

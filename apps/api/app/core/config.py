@@ -65,6 +65,8 @@ class Settings(BaseSettings):
     langfuse_host: str = ""
 
     allowed_origins: str = "http://localhost:3000"
+    # Dashboard base URL — used to build invite links shown in the members UI.
+    web_base_url: str = "http://localhost:3000"
 
 
 @lru_cache

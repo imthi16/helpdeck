@@ -6,7 +6,16 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
-from app.routers import auth, chat, conversations, documents, internal, onboarding, widget
+from app.routers import (
+    auth,
+    chat,
+    conversations,
+    documents,
+    internal,
+    members,
+    onboarding,
+    widget,
+)
 from app.services.queue import create_arq_pool
 
 
@@ -63,6 +72,7 @@ def create_app() -> FastAPI:
         return {"status": "ok", "version": settings.version}
 
     application.include_router(auth.router)
+    application.include_router(members.router)
     application.include_router(onboarding.router)
     application.include_router(documents.router)
     application.include_router(conversations.router)

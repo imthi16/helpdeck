@@ -9,8 +9,10 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.security import create_access_token
 from app.main import app
-from app.models import Message, MessageRole, Organization
+from app.models import Membership, MembershipRole, Message, MessageRole, Organization, User
+from app.routers.auth import get_auth_sessionmaker
 from app.routers.chat import get_chat_cache, get_chat_gateway, get_chat_sessionmaker
 from app.services.cache import ResponseCache, get_redis
 from app.services.embeddings import EmbeddingService
@@ -76,6 +78,27 @@ async def seeded(db_sessionmaker: Sessionmaker, tmp_path: Path):
                 await session.commit()
 
 
+@pytest.fixture
+async def auth_headers(db_sessionmaker: Sessionmaker, seeded: uuid.UUID):
+    """An authenticated member of the seeded org (chat requires membership)."""
+    app.dependency_overrides[get_auth_sessionmaker] = lambda: db_sessionmaker
+    async with db_sessionmaker() as session:
+        user = User(email=f"chat-{uuid.uuid4().hex[:10]}@example.com", password_hash="x", name="C")
+        session.add(user)
+        await session.flush()
+        session.add(Membership(org_id=seeded, user_id=user.id, role=MembershipRole.viewer))
+        await session.commit()
+        user_id = user.id
+    try:
+        yield {"Authorization": f"Bearer {create_access_token(user_id)}"}
+    finally:
+        async with db_sessionmaker() as session:
+            db_user = await session.get(User, user_id)
+            if db_user is not None:
+                await session.delete(db_user)
+                await session.commit()
+
+
 def _parse_sse(raw: str) -> list[tuple[str, dict]]:
     events: list[tuple[str, dict]] = []
     normalized = raw.replace("\r\n", "\n")
@@ -111,7 +134,7 @@ async def _messages(sm: Sessionmaker, conversation_id: uuid.UUID) -> list[Messag
 
 
 async def test_chat_streams_events_ending_in_done(
-    db_sessionmaker: Sessionmaker, seeded: uuid.UUID
+    db_sessionmaker: Sessionmaker, seeded: uuid.UUID, auth_headers: dict
 ) -> None:
     org_id = seeded
     app.dependency_overrides[get_chat_sessionmaker] = lambda: db_sessionmaker
@@ -120,7 +143,9 @@ async def test_chat_streams_events_ending_in_done(
     )
     try:
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test", headers=auth_headers
+        ) as client:
             response = await client.post(
                 "/api/v1/chat",
                 json={
@@ -149,7 +174,7 @@ async def test_chat_streams_events_ending_in_done(
 
 
 async def test_identical_query_served_from_cache_without_llm_call(
-    db_sessionmaker: Sessionmaker, seeded: uuid.UUID
+    db_sessionmaker: Sessionmaker, seeded: uuid.UUID, auth_headers: dict
 ) -> None:
     org_id = seeded
     provider = CountingProvider()
@@ -164,7 +189,9 @@ async def test_identical_query_served_from_cache_without_llm_call(
     }
     try:
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test", headers=auth_headers
+        ) as client:
             first = await client.post("/api/v1/chat", json=body)
             assert first.headers["X-HelpDeck-Cache"] == "miss"
             first_events = _parse_sse(first.text)
@@ -194,7 +221,7 @@ async def test_identical_query_served_from_cache_without_llm_call(
 
 
 async def test_disconnect_midstream_leaves_no_assistant_message(
-    db_sessionmaker: Sessionmaker, seeded: uuid.UUID
+    db_sessionmaker: Sessionmaker, seeded: uuid.UUID, auth_headers: dict
 ) -> None:
     org_id = seeded
     app.dependency_overrides[get_chat_sessionmaker] = lambda: db_sessionmaker
@@ -204,7 +231,9 @@ async def test_disconnect_midstream_leaves_no_assistant_message(
     try:
         transport = httpx.ASGITransport(app=app)
         conversation_id: uuid.UUID | None = None
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test", headers=auth_headers
+        ) as client:
             async with client.stream(
                 "POST",
                 "/api/v1/chat",

@@ -14,7 +14,7 @@ from app.models.knowledge import (
     DocumentSourceType,
     DocumentStatus,
 )
-from app.models.tenancy import Membership, MembershipRole, Organization, User
+from app.models.tenancy import Invitation, Membership, MembershipRole, Organization, User
 
 __all__ = [
     "Base",
@@ -27,6 +27,7 @@ __all__ = [
     "DocumentStatus",
     "Escalation",
     "EscalationStatus",
+    "Invitation",
     "Membership",
     "MembershipRole",
     "Message",

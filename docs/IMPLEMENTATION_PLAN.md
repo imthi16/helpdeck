@@ -130,7 +130,7 @@
 
 - [x] **5.1 Row-Level Security.** Migration: enable + `FORCE ROW LEVEL SECURITY` on all tenant tables; policies `USING (org_id = current_setting('app.current_tenant')::uuid)`; create non-superuser `helpdeck_app` DB role; app connects as it. Session/transaction middleware runs `SET LOCAL app.current_tenant = :org_id`.
       *Verify:* isolation tests — org A session querying org B rows gets zero results even with a deliberately unscoped query; app role cannot bypass.
-- [ ] **5.2 RBAC enforcement.** FastAPI dependency `require_role(...)`: owner (billing/delete org/keys), admin (KB, members, settings), agent (conversations/escalations), viewer (read-only). Members page in web: invite by email (token link), change role, remove.
+- [x] **5.2 RBAC enforcement.** FastAPI dependency `require_role(...)`: owner (billing/delete org/keys), admin (KB, members, settings), agent (conversations/escalations), viewer (read-only). Members page in web: invite by email (token link), change role, remove.
       *Verify:* matrix test — each role against each sensitive endpoint returns expected 200/403.
 - [ ] **5.3 API keys.** `api_keys` table (hashed secret, public widget key, scopes, last_used_at); settings page to create/reveal-once/revoke; widget key = the Phase 4 public key, now real; secret keys for future server-to-server use.
       *Verify:* revoked key immediately 401s; `last_used_at` updates.
