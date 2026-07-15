@@ -287,8 +287,11 @@ class LLMGateway:
             if langfuse is None:
                 text, usage = await self._provider.complete(model, messages, **kwargs)
             else:
-                with langfuse.start_as_current_generation(
-                    name="llm.complete", model=model, input=[m.__dict__ for m in messages]
+                with langfuse.start_as_current_observation(
+                    name="llm.complete",
+                    as_type="generation",
+                    model=model,
+                    input=[m.__dict__ for m in messages],
                 ) as generation:
                     text, usage = await self._provider.complete(model, messages, **kwargs)
                     generation.update(
@@ -319,5 +322,28 @@ class LLMGateway:
         **kwargs: Any,
     ) -> AsyncIterator[str]:
         model = self.model_for(route)
-        async for piece in self._provider.stream(model, messages, **kwargs):
-            yield piece
+        langfuse = get_langfuse()
+        # Explicit generation object, never a context manager: this is an
+        # async generator, and holding a contextvar-based span across yields
+        # corrupts the OTEL context. It still parents under the caller's
+        # current span (the answer node) because that context is captured at
+        # creation time.
+        generation = (
+            langfuse.start_observation(
+                name="llm.stream",
+                as_type="generation",
+                model=model,
+                input=[m.__dict__ for m in messages],
+            )
+            if langfuse is not None
+            else None
+        )
+        pieces: list[str] = []
+        try:
+            async for piece in self._provider.stream(model, messages, **kwargs):
+                pieces.append(piece)
+                yield piece
+        finally:
+            if generation is not None:
+                generation.update(output="".join(pieces))
+                generation.end()

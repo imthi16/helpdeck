@@ -149,7 +149,7 @@
 
 **Goal:** provable quality — the portfolio's strongest signal. (Langfuse + RAGAS learning block.)
 
-- [ ] **6.1 Langfuse everywhere.** Trace per conversation turn: spans for router, retrieval (with chunk IDs + scores), answer, judge; cost + tokens per span; `org_id`/`conversation_id` as metadata; user feedback (thumbs, CSAT) attached as Langfuse scores. Use Langfuse Cloud free tier for dev (self-host option documented in `docs/` for the on-prem story).
+- [x] **6.1 Langfuse everywhere.** Trace per conversation turn: spans for router, retrieval (with chunk IDs + scores), answer, judge; cost + tokens per span; `org_id`/`conversation_id` as metadata; user feedback (thumbs, CSAT) attached as Langfuse scores. Use Langfuse Cloud free tier for dev (self-host option documented in `docs/` for the on-prem story).
       *Verify:* one playground conversation shows a complete, costed trace tree in Langfuse.
 - [ ] **6.2 Golden dataset.** `eval/golden.jsonl`: 100–200 items over the seed corpus — `{question, ground_truth, expected_doc_ids}`; include ~15% deliberately unanswerable questions (expected: refusal).
       *Verify:* schema-checked by a loader test; reviewed by hand.
