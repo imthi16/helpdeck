@@ -189,3 +189,30 @@ body {
   opacity: 0.5;
   cursor: default;
 }
+
+.csat {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid #e5e7eb;
+  font-size: 13px;
+  background: #f9fafb;
+}
+.csat-scores {
+  display: flex;
+  gap: 4px;
+}
+.csat-scores button {
+  width: 28px;
+  height: 28px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 13px;
+}
+.csat-scores button:hover {
+  background: #eef2ff;
+}

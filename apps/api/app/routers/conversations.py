@@ -138,6 +138,7 @@ async def get_conversation(
                 content=m.content,
                 citations=m.citations,
                 confidence=m.confidence,
+                feedback=m.feedback,
                 created_at=m.created_at,
             )
             for m in messages

@@ -19,6 +19,7 @@ export interface TranscriptMessage {
   content: string;
   citations: unknown[];
   confidence: number | null;
+  feedback: number | null; // widget thumbs: -1 down, +1 up
   created_at: string;
 }
 

@@ -180,6 +180,16 @@ export default function ConversationsPage() {
                     >
                       <span className="mr-1 text-[10px] uppercase opacity-70">{message.role}</span>
                       {message.content}
+                      {message.feedback === 1 && (
+                        <span className="ml-2" title="Rated helpful" data-testid="thumb-up">
+                          👍
+                        </span>
+                      )}
+                      {message.feedback === -1 && (
+                        <span className="ml-2" title="Rated not helpful" data-testid="thumb-down">
+                          👎
+                        </span>
+                      )}
                     </div>
                   ))}
                 </div>

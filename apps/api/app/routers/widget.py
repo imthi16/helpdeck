@@ -11,14 +11,26 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sse_starlette.sse import EventSourceResponse
 
 from app.core.db import app_session_factory, tenant_session
-from app.models import ConversationChannel, Message, MessageRole, Organization
+from app.models import (
+    Conversation,
+    ConversationChannel,
+    ConversationStatus,
+    Message,
+    MessageRole,
+    Organization,
+)
 from app.routers.chat import (
     get_chat_cache,
     get_chat_checkpointer,
     get_chat_gateway,
     run_chat_stream,
 )
-from app.schemas.widget import WidgetChatRequest, WidgetConfig, WidgetFeedbackRequest
+from app.schemas.widget import (
+    WidgetChatRequest,
+    WidgetConfig,
+    WidgetCsatRequest,
+    WidgetFeedbackRequest,
+)
 from app.services.api_keys import resolve_key, touch_last_used
 from app.services.cache import ResponseCache
 from app.services.llm import LLMGateway
@@ -165,3 +177,36 @@ async def widget_feedback(
         if message is None or message.org_id != org.id or message.role != MessageRole.assistant:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="message not found")
         message.feedback = payload.rating
+
+
+@router.post("/csat", status_code=status.HTTP_204_NO_CONTENT)
+async def widget_csat(
+    payload: WidgetCsatRequest,
+    sessionmaker: SessionmakerDep,
+    limiter: LimiterDep,
+    request: Request,
+    response: Response,
+    x_public_key: Annotated[str | None, Header()] = None,
+    origin: Annotated[str | None, Header()] = None,
+) -> None:
+    """Record a 1–5 satisfaction rating when a conversation ends (task 5.6).
+
+    A conversation is scored once (409 on re-score, so analytics stay honest)
+    and is closed if it was still open — the rating marks the end of the
+    exchange. Escalated conversations keep their status for the inbox queue.
+    """
+    org = await _org_for_key(sessionmaker, x_public_key)
+    _check_origin(org, origin)
+    await _enforce_rate_limit(limiter, x_public_key or "", request)
+
+    async with tenant_session(org.id, session_factory=sessionmaker) as session:
+        conversation = await session.get(Conversation, payload.conversation_id)
+        if conversation is None or conversation.org_id != org.id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="conversation not found"
+            )
+        if conversation.csat_score is not None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="already rated")
+        conversation.csat_score = payload.score
+        if conversation.status == ConversationStatus.open:
+            conversation.status = ConversationStatus.closed

@@ -7,8 +7,8 @@
 
 ## Status
 
-- **Current phase:** 5 (in progress — 5.1 done)
-- **Last updated:** 2026-07-14
+- **Current phase:** 5 (complete) → 6 next
+- **Last updated:** 2026-07-15
 - **Blockers:** none
 
 ---
@@ -138,7 +138,7 @@
       *Verify:* actions above produce rows; rows cannot be updated/deleted by app role.
 - [x] **5.5 Analytics.** Endpoints + dashboard page: conversations over time, deflection rate (resolved without escalation), escalation rate, CSAT average, top unanswered questions (low-confidence/escalated queries clustered by similarity). Recharts/Tremor cards + charts. Consider a nightly rollup table if queries get slow.
       *Verify:* seeded + test traffic renders correct numbers (assert against fixtures).
-- [ ] **5.6 CSAT + feedback loop.** Widget asks 1–5 rating when a conversation is closed/idle; stored on conversation; thumbs feedback (4.1) surfaced on messages in the inbox transcript.
+- [x] **5.6 CSAT + feedback loop.** Widget asks 1–5 rating when a conversation is closed/idle; stored on conversation; thumbs feedback (4.1) surfaced on messages in the inbox transcript.
       *Verify:* rating flows into analytics; thumbs visible in inbox.
 
 **Exit criteria:** isolation matrix green; two demo orgs coexist with zero leakage; analytics live.

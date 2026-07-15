@@ -9,6 +9,7 @@ from app.models import (
     ApiKeyType,
     Conversation,
     ConversationChannel,
+    ConversationStatus,
     Message,
     MessageRole,
     Organization,
@@ -172,3 +173,66 @@ async def test_feedback_records_thumbs(db_sessionmaker: Sessionmaker) -> None:
             assert refreshed.feedback == 1
     finally:
         await _cleanup(db_sessionmaker, org_id)
+
+
+async def test_csat_scores_once_and_closes_conversation(db_sessionmaker: Sessionmaker) -> None:
+    key = f"pk_{uuid.uuid4().hex}"
+    org_id = await _make_org(db_sessionmaker, public_key=key)
+    async with db_sessionmaker() as session:
+        conversation = Conversation(org_id=org_id, channel=ConversationChannel.widget)
+        session.add(conversation)
+        await session.commit()
+        conversation_id = conversation.id
+
+    try:
+        async with _client() as client:
+            ok = await client.post(
+                "/api/v1/widget/csat",
+                headers={"X-Public-Key": key},
+                json={"conversation_id": str(conversation_id), "score": 4},
+            )
+            assert ok.status_code == 204
+
+            again = await client.post(
+                "/api/v1/widget/csat",
+                headers={"X-Public-Key": key},
+                json={"conversation_id": str(conversation_id), "score": 5},
+            )
+            assert again.status_code == 409
+
+            out_of_range = await client.post(
+                "/api/v1/widget/csat",
+                headers={"X-Public-Key": key},
+                json={"conversation_id": str(conversation_id), "score": 6},
+            )
+            assert out_of_range.status_code == 422
+
+        async with db_sessionmaker() as session:
+            refreshed = await session.get(Conversation, conversation_id)
+            assert refreshed.csat_score == 4
+            assert refreshed.status == ConversationStatus.closed
+    finally:
+        await _cleanup(db_sessionmaker, org_id)
+
+
+async def test_csat_rejects_other_orgs_conversation(db_sessionmaker: Sessionmaker) -> None:
+    key_a = f"pk_{uuid.uuid4().hex}"
+    org_a = await _make_org(db_sessionmaker, public_key=key_a)
+    org_b = await _make_org(db_sessionmaker, public_key=f"pk_{uuid.uuid4().hex}")
+    async with db_sessionmaker() as session:
+        conversation = Conversation(org_id=org_b, channel=ConversationChannel.widget)
+        session.add(conversation)
+        await session.commit()
+        conversation_id = conversation.id
+
+    try:
+        async with _client() as client:
+            response = await client.post(
+                "/api/v1/widget/csat",
+                headers={"X-Public-Key": key_a},
+                json={"conversation_id": str(conversation_id), "score": 5},
+            )
+        assert response.status_code == 404
+    finally:
+        await _cleanup(db_sessionmaker, org_a)
+        await _cleanup(db_sessionmaker, org_b)
