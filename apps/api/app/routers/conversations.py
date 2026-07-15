@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.core.db import async_session_factory
+from app.core.db import app_session_factory, tenant_session
 from app.models import (
     Conversation,
     ConversationChannel,
@@ -31,7 +31,9 @@ router = APIRouter(prefix="/api/v1/conversations", tags=["conversations"])
 
 
 def get_conversations_sessionmaker() -> async_sessionmaker[AsyncSession]:
-    return async_session_factory
+    # Base factory for the tenant lane; every endpoint below opens
+    # tenant_session(org_id, session_factory=<this>) so RLS is enforced.
+    return app_session_factory
 
 
 def current_org_id(
@@ -70,7 +72,7 @@ async def list_conversations(
     if channel is not None:
         filters.append(Conversation.channel == channel)
 
-    async with sessionmaker() as session:
+    async with tenant_session(org_id, session_factory=sessionmaker) as session:
         rows = (
             await session.execute(
                 select(Conversation, func.count(Message.id))
@@ -98,7 +100,7 @@ async def list_conversations(
 async def get_conversation(
     conversation_id: uuid.UUID, sessionmaker: SessionmakerDep, org_id: OrgDep
 ) -> ConversationDetail:
-    async with sessionmaker() as session:
+    async with tenant_session(org_id, session_factory=sessionmaker) as session:
         conversation = await _load_owned(session, conversation_id, org_id)
         messages = (
             (
@@ -153,7 +155,7 @@ async def get_conversation(
 async def resolve_conversation(
     conversation_id: uuid.UUID, sessionmaker: SessionmakerDep, org_id: OrgDep
 ) -> ConversationDetail:
-    async with sessionmaker() as session:
+    async with tenant_session(org_id, session_factory=sessionmaker) as session:
         conversation = await _load_owned(session, conversation_id, org_id)
         conversation.status = ConversationStatus.closed
         pending = (
@@ -170,7 +172,6 @@ async def resolve_conversation(
         )
         for escalation in pending:
             escalation.status = EscalationStatus.resolved
-        await session.commit()
     return await get_conversation(conversation_id, sessionmaker, org_id)
 
 
@@ -181,7 +182,7 @@ async def reply_to_conversation(
     sessionmaker: SessionmakerDep,
     org_id: OrgDep,
 ) -> ConversationDetail:
-    async with sessionmaker() as session:
+    async with tenant_session(org_id, session_factory=sessionmaker) as session:
         conversation = await _load_owned(session, conversation_id, org_id)
         session.add(
             Message(
@@ -191,5 +192,4 @@ async def reply_to_conversation(
                 content=payload.content,
             )
         )
-        await session.commit()
     return await get_conversation(conversation_id, sessionmaker, org_id)

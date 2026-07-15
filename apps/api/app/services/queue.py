@@ -16,12 +16,12 @@ async def create_arq_pool() -> ArqRedis:
 
 
 class IngestQueue(Protocol):
-    async def enqueue_ingest(self, document_id: uuid.UUID) -> None: ...
+    async def enqueue_ingest(self, document_id: uuid.UUID, org_id: uuid.UUID) -> None: ...
 
 
 class ArqIngestQueue:
     def __init__(self, pool: ArqRedis) -> None:
         self._pool = pool
 
-    async def enqueue_ingest(self, document_id: uuid.UUID) -> None:
-        await self._pool.enqueue_job(INGEST_JOB, str(document_id))
+    async def enqueue_ingest(self, document_id: uuid.UUID, org_id: uuid.UUID) -> None:
+        await self._pool.enqueue_job(INGEST_JOB, str(document_id), str(org_id))

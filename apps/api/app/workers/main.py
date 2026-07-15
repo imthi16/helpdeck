@@ -5,14 +5,16 @@ from typing import Any
 from arq.connections import RedisSettings
 
 from app.core.config import get_settings
-from app.core.db import async_session_factory
+from app.core.db import app_session_factory
 from app.services.embeddings import EmbeddingService
 from app.services.storage import get_storage
 from app.workers.ingest import ingest_document
 
 
 async def startup(ctx: dict[str, Any]) -> None:
-    ctx["sessionmaker"] = async_session_factory
+    # The worker serves tenant data as the restricted app role; each job binds
+    # its own tenant via tenant_worker_session.
+    ctx["sessionmaker"] = app_session_factory
     ctx["embedding_service"] = EmbeddingService()
     ctx["storage"] = get_storage()
 

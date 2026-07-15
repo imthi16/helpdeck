@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.core.db import async_session_factory
+from app.core.db import app_session_factory
 from app.models import Organization
 from app.routers.auth import get_current_user
 from app.schemas.auth import UserResponse
@@ -21,7 +21,9 @@ class CompleteOnboardingRequest(BaseModel):
 
 
 def get_onboarding_sessionmaker() -> async_sessionmaker[AsyncSession]:
-    return async_session_factory
+    # Identity lane: organizations is an identity table (not RLS'd), so this
+    # stays a plain app-role session with an explicit commit.
+    return app_session_factory
 
 
 def current_org_id(

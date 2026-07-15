@@ -228,4 +228,3 @@ async def _record_escalation(
                 reason=reason,
             )
         )
-        await session.commit()

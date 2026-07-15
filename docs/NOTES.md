@@ -64,16 +64,35 @@ RLS is applied to the tenant **data** tables only. `users`, `memberships`, and
 user in?"); forcing RLS there would break login. Those tables keep their existing
 explicit `org_id` scoping in application code.
 
-### Remaining work (follow-up PR)
+### Runtime cutover (PR: `feat/5.2a-tenant-session-cutover`)
 
-The **runtime cutover** — making the FastAPI process actually connect as `helpdeck_app`
-and routing every org-scoped endpoint (documents, conversations, dashboard chat, widget
-chat, internal search, retrieval reads) through `tenant_session` so `app.current_tenant`
-is set per request — is intentionally a separate PR. It touches the streaming chat path
-(SSE + Postgres checkpointer + cache), where a missed `SET LOCAL` would fail closed and
-break flows in subtle ways, so it is best reviewed and E2E-verified on its own. Until
-then the DB-level FORCE RLS is in place as defense-in-depth, and the app continues to
-rely on the explicit `org_id` filters already present in every tenant query.
+The FastAPI process and the arq worker now serve all tenant data as `helpdeck_app`:
 
-Because of this, **Phase 5.1 is not yet checked off** in `IMPLEMENTATION_PLAN.md` — the
-foundation and the isolation proof have landed; the app-role cutover is pending.
+- **Two lanes.** *Tenant lane:* documents, conversations, chat persistence, widget
+  chat/feedback, internal search, retrieval, and agent escalation all run inside
+  `tenant_session(org_id)` (transaction-owning; no inner commits — helpers `flush()`
+  where a generated id is needed before block exit). *Identity lane:* auth, onboarding,
+  and widget key→org resolution use plain `app_session_factory` sessions — these queries
+  run before a tenant is known, so they keep explicit scoping instead of RLS. A new
+  migration (`677bd6a813f4`) grants the app role CRUD on `users`/`organizations`/
+  `memberships` (no RLS there — see design decision above).
+- **Session-factory contract.** `SessionFactory` (in `app/core/db.py`) is anything
+  callable returning an `AsyncSession` context. `tenant_sessionmaker(org_id)` binds the
+  tenant once for helpers that open their own short sessions (chat stream, retriever,
+  agent nodes); `transactional_sessionmaker(base)` gives scripts/tests the same
+  owns-the-transaction contract over the superuser engine. The SSE chat stream keeps its
+  multiple-short-sessions shape — one transaction across the stream would pin a pooled
+  connection for the LLM's whole lifetime.
+- **Worker.** `enqueue_ingest` now carries `org_id`; `ingest_document` runs the pipeline
+  under `tenant_worker_session`, which sets `app.current_tenant` *session*-scoped (the
+  pipeline commits between status transitions) and clears it before the connection
+  returns to the pool.
+- **Known deviation:** the LangGraph checkpointer (`AsyncPostgresSaver`) still connects
+  via the superuser DSN. Its tables are created lazily by `saver.setup()` at app start,
+  so migration-time grants can't cover a fresh database. Checkpoint rows are keyed by
+  `thread_id` (no cross-tenant enumeration surface through the app), and the cutover of
+  this last path is tracked for a later hardening pass.
+
+With this, the Phase 5.1 Verify holds end to end (`tests/test_rls.py`, including a
+router-level test where the documents endpoint over the app role sees only the caller's
+org), and **5.1 is checked off** in `IMPLEMENTATION_PLAN.md`.

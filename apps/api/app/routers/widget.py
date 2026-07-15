@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sse_starlette.sse import EventSourceResponse
 
-from app.core.db import async_session_factory
+from app.core.db import app_session_factory, tenant_session
 from app.models import ConversationChannel, Message, MessageRole, Organization
 from app.routers.chat import (
     get_chat_cache,
@@ -30,7 +30,10 @@ WIDGET_RATE_LIMIT_PER_MINUTE = 30
 
 
 def get_widget_sessionmaker() -> async_sessionmaker[AsyncSession]:
-    return async_session_factory
+    # App-role base factory. Key->org resolution runs as a plain identity-lane
+    # session (it happens before the tenant is known); everything after wraps
+    # this base in a tenant session so RLS is enforced.
+    return app_session_factory
 
 
 def get_widget_rate_limiter(request: Request) -> RateLimiter | None:
@@ -144,9 +147,8 @@ async def widget_feedback(
     _check_origin(org, origin)
     await _enforce_rate_limit(limiter, org, request)
 
-    async with sessionmaker() as session:
+    async with tenant_session(org.id, session_factory=sessionmaker) as session:
         message = await session.get(Message, payload.message_id)
         if message is None or message.org_id != org.id or message.role != MessageRole.assistant:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="message not found")
         message.feedback = payload.rating
-        await session.commit()

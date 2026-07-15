@@ -86,7 +86,7 @@ async def test_ingest_pdf_job_reaches_ready_with_embeddings(
             "embedding_service": fake_embedding_service(),
             "storage": storage,
         }
-        n_chunks = await ingest_document(ctx, str(doc_id))
+        n_chunks = await ingest_document(ctx, str(doc_id), str(org_id))
         assert n_chunks > 0
 
         async with db_sessionmaker() as session:
@@ -124,7 +124,7 @@ async def test_ingest_text_job_persists_chunks(
             "embedding_service": fake_embedding_service(),
             "storage": storage,
         }
-        n_chunks = await ingest_document(ctx, str(doc_id))
+        n_chunks = await ingest_document(ctx, str(doc_id), str(org_id))
         assert n_chunks > 0
 
         async with db_sessionmaker() as session:
@@ -177,7 +177,7 @@ async def test_enqueue_and_worker_burst_run(db_sessionmaker: Sessionmaker, tmp_p
 
     pool = await create_pool(redis_settings)
     try:
-        await pool.enqueue_job("ingest_document", str(doc_id), _queue_name=queue_name)
+        await pool.enqueue_job("ingest_document", str(doc_id), str(org_id), _queue_name=queue_name)
         worker = Worker(
             functions=[ingest_document],
             redis_settings=redis_settings,
@@ -217,8 +217,8 @@ async def test_reindex_replaces_existing_chunks(
     }
 
     try:
-        first = await ingest_document(ctx, str(doc_id))
-        second = await ingest_document(ctx, str(doc_id))
+        first = await ingest_document(ctx, str(doc_id), str(org_id))
+        second = await ingest_document(ctx, str(doc_id), str(org_id))
         assert first == second
 
         async with db_sessionmaker() as session:
