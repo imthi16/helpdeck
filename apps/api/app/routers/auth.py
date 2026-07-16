@@ -133,7 +133,8 @@ async def signup_endpoint(
                 payload={"via": "invite" if payload.invite_token else "org"},
                 ip=request.client.host if request.client else None,
             )
-            await session.commit()
+        # One commit for user/org/membership/key AND the audit row — atomic.
+        await session.commit()
 
     assert user_response is not None
     _set_auth_cookies(response, create_access_token(user.id), create_refresh_token(user.id))
