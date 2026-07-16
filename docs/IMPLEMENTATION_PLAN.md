@@ -7,8 +7,8 @@
 
 ## Status
 
-- **Current phase:** 6 (complete) → 7 next
-- **Last updated:** 2026-07-15
+- **Current phase:** 7 (complete — live deploy + demo recording are the remaining manual steps)
+- **Last updated:** 2026-07-17
 - **Blockers:** none
 
 ---
@@ -182,7 +182,7 @@
       *Verify:* a fresh clone by-the-README reaches a working playground in < 10 min.
 - [x] **7.6 Project hygiene.** `ROADMAP.md` (shipped / in-progress / planned); 10–15 labeled GitHub issues (`enhancement`, `good-first-issue`, `channel:whatsapp`, ...); `docs/architecture.md`; 2–3 ADRs (pgvector-over-dedicated-DB, SSE-over-WebSockets, RLS multi-tenancy).
       *Verify:* issues + roadmap render coherently on GitHub.
-- [ ] **7.7 Demo video script.** `docs/demo-script.md`, 3 minutes: (1) ingest docs live → (2) grounded answer with citations → (3) out-of-KB question refused + escalated ("it refuses to make things up") → (4) analytics + Langfuse trace + eval scores. Record separately.
+- [x] **7.7 Demo video script.** `docs/demo-script.md`, 3 minutes: (1) ingest docs live → (2) grounded answer with citations → (3) out-of-KB question refused + escalated ("it refuses to make things up") → (4) analytics + Langfuse trace + eval scores. Record separately.
       *Verify:* script table-reads at ≤ 3 minutes.
 
 **Exit criteria:** live public demo; fresh-clone quickstart works; README + roadmap + issues portfolio-ready.
