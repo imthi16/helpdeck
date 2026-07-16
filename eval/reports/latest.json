@@ -1,0 +1,456 @@
+{
+  "created_at": "20260715T190839Z",
+  "subset": "fast",
+  "metrics": {
+    "context_recall": 1.0,
+    "context_precision": 0.42857142857142855,
+    "refusal_accuracy": 1.0,
+    "citation_validity": 1.0,
+    "answered_rate": 0.6190476190476191,
+    "errors": 2
+  },
+  "thresholds": {
+    "context_recall": 0.7,
+    "refusal_accuracy": 0.9,
+    "citation_validity": 0.85
+  },
+  "passed": true,
+  "duration_s": 1101.1372245420062,
+  "items": [
+    {
+      "id": "g001",
+      "escalated": false,
+      "citations": 1,
+      "retrieved_docs": [
+        "returns",
+        "returns",
+        "returns",
+        "returns",
+        "store-policies",
+        "payments-security",
+        "returns",
+        "store-policies"
+      ],
+      "error": null
+    },
+    {
+      "id": "g008",
+      "escalated": false,
+      "citations": 1,
+      "retrieved_docs": [
+        "shipping",
+        "shipping",
+        "shipping",
+        "shipping",
+        "shipping",
+        "returns",
+        "faq",
+        "payments-security"
+      ],
+      "error": null
+    },
+    {
+      "id": "g015",
+      "escalated": false,
+      "citations": 1,
+      "retrieved_docs": [
+        "warranty",
+        "grinder-manual",
+        "warranty",
+        "warranty",
+        "water-quality",
+        "warranty",
+        "faq",
+        "descaling"
+      ],
+      "error": null
+    },
+    {
+      "id": "g022",
+      "escalated": true,
+      "citations": 1,
+      "retrieved_docs": [
+        "descaling",
+        "descaling",
+        "descaling",
+        "descaling",
+        "getting-started",
+        "water-quality",
+        "grinder-manual",
+        "faq"
+      ],
+      "error": null
+    },
+    {
+      "id": "g029",
+      "escalated": false,
+      "citations": 1,
+      "retrieved_docs": [
+        "getting-started",
+        "troubleshooting",
+        "getting-started",
+        "allergen-nutrition",
+        "shipping",
+        "getting-started",
+        "grinder-manual",
+        "descaling"
+      ],
+      "error": null
+    },
+    {
+      "id": "g035",
+      "escalated": false,
+      "citations": 2,
+      "retrieved_docs": [
+        "getting-started",
+        "troubleshooting",
+        "troubleshooting",
+        "allergen-nutrition",
+        "getting-started",
+        "water-quality",
+        "water-quality",
+        "allergen-nutrition"
+      ],
+      "error": null
+    },
+    {
+      "id": "g042",
+      "escalated": true,
+      "citations": 1,
+      "retrieved_docs": [
+        "wholesale",
+        "payments-security",
+        "faq",
+        "store-policies",
+        "returns",
+        "warranty",
+        "warranty",
+        "account-billing"
+      ],
+      "error": null
+    },
+    {
+      "id": "g043",
+      "escalated": true,
+      "citations": 1,
+      "retrieved_docs": [
+        "faq",
+        "shipping",
+        "shipping",
+        "store-policies",
+        "store-policies",
+        "wholesale",
+        "returns",
+        "store-policies"
+      ],
+      "error": null
+    },
+    {
+      "id": "g048",
+      "escalated": false,
+      "citations": 1,
+      "retrieved_docs": [
+        "account-billing",
+        "coffee-club",
+        "account-billing",
+        "coffee-club",
+        "loyalty-program",
+        "payments-security",
+        "coffee-club",
+        "account-billing"
+      ],
+      "error": null
+    },
+    {
+      "id": "g050",
+      "escalated": true,
+      "citations": 1,
+      "retrieved_docs": [
+        "account-billing",
+        "coffee-club",
+        "coffee-club",
+        "payments-security",
+        "coffee-club",
+        "coffee-club",
+        "account-billing",
+        "payments-security"
+      ],
+      "error": null
+    },
+    {
+      "id": "g054",
+      "escalated": false,
+      "citations": 0,
+      "retrieved_docs": [],
+      "error": "litellm.APIConnectionError: Ollama_chatException - {\"error\":\"model runner has unexpectedly stopped, this may be due to resource limitations or an internal error, check ollama server logs for details\"}"
+    },
+    {
+      "id": "g056",
+      "escalated": false,
+      "citations": 1,
+      "retrieved_docs": [
+        "grinder-manual",
+        "grinder-manual",
+        "troubleshooting",
+        "descaling",
+        "descaling",
+        "descaling",
+        "water-quality",
+        "water-quality"
+      ],
+      "error": null
+    },
+    {
+      "id": "g061",
+      "escalated": true,
+      "citations": 1,
+      "retrieved_docs": [
+        "loyalty-program",
+        "account-billing",
+        "coffee-club",
+        "faq",
+        "coffee-club",
+        "wholesale",
+        "loyalty-program",
+        "coffee-club"
+      ],
+      "error": null
+    },
+    {
+      "id": "g062",
+      "escalated": false,
+      "citations": 1,
+      "retrieved_docs": [
+        "loyalty-program",
+        "account-billing",
+        "faq",
+        "account-billing",
+        "coffee-club",
+        "coffee-club",
+        "coffee-club",
+        "payments-security"
+      ],
+      "error": null
+    },
+    {
+      "id": "g068",
+      "escalated": true,
+      "citations": 1,
+      "retrieved_docs": [
+        "wholesale",
+        "wholesale",
+        "wholesale",
+        "wholesale",
+        "payments-security",
+        "shipping",
+        "wholesale",
+        "allergen-nutrition"
+      ],
+      "error": null
+    },
+    {
+      "id": "g074",
+      "escalated": false,
+      "citations": 1,
+      "retrieved_docs": [
+        "loyalty-program",
+        "loyalty-program",
+        "loyalty-program",
+        "loyalty-program",
+        "loyalty-program",
+        "shipping",
+        "account-billing",
+        "grinder-manual"
+      ],
+      "error": null
+    },
+    {
+      "id": "g075",
+      "escalated": true,
+      "citations": 1,
+      "retrieved_docs": [
+        "loyalty-program",
+        "loyalty-program",
+        "loyalty-program",
+        "loyalty-program",
+        "loyalty-program",
+        "coffee-club",
+        "shipping",
+        "account-billing"
+      ],
+      "error": null
+    },
+    {
+      "id": "g081",
+      "escalated": false,
+      "citations": 1,
+      "retrieved_docs": [
+        "allergen-nutrition",
+        "faq",
+        "faq",
+        "wholesale",
+        "allergen-nutrition",
+        "faq",
+        "allergen-nutrition",
+        "troubleshooting"
+      ],
+      "error": null
+    },
+    {
+      "id": "g082",
+      "escalated": false,
+      "citations": 1,
+      "retrieved_docs": [
+        "allergen-nutrition",
+        "allergen-nutrition",
+        "allergen-nutrition",
+        "descaling",
+        "faq",
+        "descaling",
+        "getting-started",
+        "allergen-nutrition"
+      ],
+      "error": null
+    },
+    {
+      "id": "g087",
+      "escalated": false,
+      "citations": 1,
+      "retrieved_docs": [
+        "water-quality",
+        "water-quality",
+        "water-quality",
+        "water-quality",
+        "getting-started",
+        "water-quality",
+        "descaling",
+        "descaling"
+      ],
+      "error": null
+    },
+    {
+      "id": "g093",
+      "escalated": true,
+      "citations": 1,
+      "retrieved_docs": [
+        "payments-security",
+        "account-billing",
+        "wholesale",
+        "store-policies",
+        "account-billing",
+        "coffee-club",
+        "returns",
+        "loyalty-program"
+      ],
+      "error": null
+    },
+    {
+      "id": "g099",
+      "escalated": false,
+      "citations": 0,
+      "retrieved_docs": [],
+      "error": "litellm.APIConnectionError: Ollama_chatException - {\"error\":\"model runner has unexpectedly stopped, this may be due to resource limitations or an internal error, check ollama server logs for details\"}"
+    },
+    {
+      "id": "g100",
+      "escalated": false,
+      "citations": 2,
+      "retrieved_docs": [
+        "store-policies",
+        "returns",
+        "warranty",
+        "store-policies",
+        "shipping",
+        "returns",
+        "returns",
+        "returns"
+      ],
+      "error": null
+    },
+    {
+      "id": "g106",
+      "escalated": true,
+      "citations": 0,
+      "retrieved_docs": [
+        "wholesale",
+        "allergen-nutrition",
+        "wholesale",
+        "grinder-manual",
+        "water-quality",
+        "shipping",
+        "faq",
+        "coffee-club"
+      ],
+      "error": null
+    },
+    {
+      "id": "g107",
+      "escalated": true,
+      "citations": 0,
+      "retrieved_docs": [],
+      "error": null
+    },
+    {
+      "id": "g109",
+      "escalated": true,
+      "citations": 0,
+      "retrieved_docs": [
+        "wholesale",
+        "shipping",
+        "faq",
+        "account-billing",
+        "store-policies",
+        "faq",
+        "warranty",
+        "coffee-club"
+      ],
+      "error": null
+    },
+    {
+      "id": "g113",
+      "escalated": true,
+      "citations": 0,
+      "retrieved_docs": [],
+      "error": null
+    },
+    {
+      "id": "g116",
+      "escalated": true,
+      "citations": 0,
+      "retrieved_docs": [],
+      "error": null
+    },
+    {
+      "id": "g121",
+      "escalated": true,
+      "citations": 0,
+      "retrieved_docs": [
+        "allergen-nutrition",
+        "allergen-nutrition",
+        "troubleshooting",
+        "faq",
+        "allergen-nutrition",
+        "descaling",
+        "returns",
+        "faq"
+      ],
+      "error": null
+    },
+    {
+      "id": "g123",
+      "escalated": true,
+      "citations": 1,
+      "retrieved_docs": [
+        "account-billing",
+        "payments-security",
+        "shipping",
+        "wholesale",
+        "store-policies",
+        "wholesale",
+        "account-billing",
+        "coffee-club"
+      ],
+      "error": null
+    }
+  ]
+}
