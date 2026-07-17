@@ -180,7 +180,7 @@
       *Verify:* Lighthouse ≥ 90 performance/accessibility; mobile clean.
 - [ ] **7.5 Flagship README.** Order: one-line pitch → live demo link + 30s GIF → problem → architecture diagram (mermaid, committed as image too) → features → stack badges → quickstart (`docker compose up` path, < 10 min) → **eval results table (real RAGAS scores)** → roadmap link → honest status badge ("MVP live — WhatsApp channel in progress") → license.
       *Verify:* a fresh clone by-the-README reaches a working playground in < 10 min.
-- [ ] **7.6 Project hygiene.** `ROADMAP.md` (shipped / in-progress / planned); 10–15 labeled GitHub issues (`enhancement`, `good-first-issue`, `channel:whatsapp`, ...); `docs/architecture.md`; 2–3 ADRs (pgvector-over-dedicated-DB, SSE-over-WebSockets, RLS multi-tenancy).
+- [x] **7.6 Project hygiene.** `ROADMAP.md` (shipped / in-progress / planned); 10–15 labeled GitHub issues (`enhancement`, `good-first-issue`, `channel:whatsapp`, ...); `docs/architecture.md`; 2–3 ADRs (pgvector-over-dedicated-DB, SSE-over-WebSockets, RLS multi-tenancy).
       *Verify:* issues + roadmap render coherently on GitHub.
 - [ ] **7.7 Demo video script.** `docs/demo-script.md`, 3 minutes: (1) ingest docs live → (2) grounded answer with citations → (3) out-of-KB question refused + escalated ("it refuses to make things up") → (4) analytics + Langfuse trace + eval scores. Record separately.
       *Verify:* script table-reads at ≤ 3 minutes.
