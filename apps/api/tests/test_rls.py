@@ -170,6 +170,7 @@ async def test_identity_lane_works_as_app_role(
         user = await signup(
             session, email=email, password="hunter2pw", name="I", org_name="IdentityOrg"
         )
+        await session.commit()  # signup flushes; callers own the commit (5.4)
         loaded = await load_user_response(session, user.id)
     assert loaded is not None
     assert loaded.memberships and loaded.memberships[0].role.value == "owner"
