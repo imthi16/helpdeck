@@ -1,0 +1,16 @@
+# Repo-root build context for apps/api/Dockerfile — keep it lean.
+**/.venv/
+**/__pycache__/
+**/node_modules/
+**/.next/
+**/dist/
+**/test-results/
+**/.pytest_cache/
+apps/web/
+apps/widget/
+docs/
+.github/
+.git/
+**/.env
+**/storage/
+eval/reports/

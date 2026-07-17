@@ -13,11 +13,10 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # no
 
 from app.core.config import get_settings  # noqa: E402
 from app.services.embeddings import EmbeddingService  # noqa: E402
-from app.services.ingestion.seed import seed_corpus  # noqa: E402
+from app.services.ingestion.seed import find_corpus_dir, seed_corpus  # noqa: E402
 from app.services.storage import get_storage  # noqa: E402
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-CORPUS_DIR = REPO_ROOT / "eval" / "fixtures" / "corpus"
+CORPUS_DIR = find_corpus_dir()
 
 WIDGET_DEMO_ORG = "Widget Demo Co"
 WIDGET_DEMO_KEY = "pk_widget_demo"

@@ -8,7 +8,6 @@ visitor gets a fresh instance.
 """
 
 import uuid
-from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException, status
@@ -21,10 +20,6 @@ from app.core.logging import get_logger
 from app.models import Conversation
 
 logger = get_logger(__name__)
-
-# demo.py -> services -> app -> api -> apps -> repo root
-REPO_ROOT = Path(__file__).resolve().parents[4]
-CORPUS_DIR = REPO_ROOT / "eval" / "fixtures" / "corpus"
 
 
 def is_demo_org(org_id: uuid.UUID) -> bool:
@@ -63,7 +58,7 @@ async def reset_demo_org(ctx: dict[str, Any]) -> dict[str, Any]:
 
     from app.core.db import async_session_factory
     from app.services.embeddings import EmbeddingService
-    from app.services.ingestion.seed import ingest_corpus_into
+    from app.services.ingestion.seed import find_corpus_dir, ingest_corpus_into
     from app.services.storage import get_storage
 
     org_id = uuid.UUID(settings.demo_org_id)
@@ -74,7 +69,7 @@ async def reset_demo_org(ctx: dict[str, Any]) -> dict[str, Any]:
         async_session_factory,
         EmbeddingService(),
         get_storage(),
-        corpus_dir=CORPUS_DIR,
+        corpus_dir=find_corpus_dir(),
         org_id=org_id,
         replace=True,
     )
