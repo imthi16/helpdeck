@@ -62,6 +62,8 @@ change it without re-embedding the corpus.
    (`preDeployCommand: uv run alembic upgrade head`).
 4. Seed the demo org once from a Render shell:
    `uv run --no-sync python -m scripts.seed_widget`
+   (the image ships the corpus at `/app/eval/fixtures/corpus`; the seed
+   scripts locate it via `find_corpus_dir()`, or set `DEMO_CORPUS_DIR`).
 5. Copy the deploy hook URLs (Settings → Deploy Hook) into the GitHub secrets
    `RENDER_DEPLOY_HOOK_API` and `RENDER_DEPLOY_HOOK_WORKER` — that arms the
    CD workflow (`.github/workflows/deploy.yml`, task 7.2).
@@ -73,7 +75,27 @@ change it without re-embedding the corpus.
 2. Environment variables: `NEXT_PUBLIC_API_URL=https://<helpdeck-api>.onrender.com`.
 3. PR preview deploys come free with the Git integration — no workflow code.
 4. Back on Render, set `ALLOWED_ORIGINS` and `WEB_BASE_URL` to the Vercel
-   production URL, and `COOKIE_SECURE=true` is already set by the blueprint.
+   production URL. **Cookies are cross-site here:** the dashboard on
+   `*.vercel.app` and the API on `*.onrender.com` are different sites, so
+   `SameSite=Lax` cookies would never be sent on fetches. The blueprint sets
+   `COOKIE_SECURE=true` and `COOKIE_SAMESITE=none` to make the auth cookies
+   cross-site-capable. The cleaner long-term setup is one custom domain
+   (`app.example.com` + `api.example.com` are same-site) with
+   `COOKIE_SAMESITE=lax` and `COOKIE_DOMAIN=.example.com`.
+
+### Storage caveat (two-service split)
+
+PDF/text ingestion writes raw bytes to `STORAGE_DIR` on the API service and
+the worker reads the same key — but Render services don't share a
+filesystem, so with the default local storage **only URL ingestion works
+across the split**. Interim options until object storage lands (see the
+repo issues):
+
+- **Single-service option:** run the worker inside the API service by
+  overriding the web service's docker command with
+  `sh -c "uv run --no-sync arq app.workers.main.WorkerSettings & uv run --no-sync uvicorn app.main:app --host 0.0.0.0 --port $PORT"`
+  and deleting the worker service. One box does both; fine at demo scale.
+- Point `STORAGE_DIR` at a shared mount if your platform provides one.
 
 ## 6. Widget hosting
 

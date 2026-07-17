@@ -74,19 +74,41 @@ async def sample_online_quality(ctx: dict[str, Any]) -> dict[str, Any]:
 
     scores: list[float] = []
     skipped_missing_chunks = 0
+    # One query for every cited chunk across the sample (not per message).
+    all_chunk_ids = {
+        uuid.UUID(c["chunk_id"])
+        for message in sampled
+        for c in message.citations
+        if c.get("chunk_id")
+    }
+    async with async_session_factory() as session:
+        found = (
+            (await session.execute(select(Chunk).where(Chunk.id.in_(all_chunk_ids))))
+            .scalars()
+            .all()
+        )
+    content_by_id = {chunk.id: chunk.content for chunk in found}
+
     for message in sampled:
-        chunk_ids = [uuid.UUID(c["chunk_id"]) for c in message.citations if c.get("chunk_id")]
-        async with async_session_factory() as session:
-            chunks = (
-                (await session.execute(select(Chunk).where(Chunk.id.in_(chunk_ids))))
-                .scalars()
-                .all()
-            )
-        if not chunks:
-            # Cited chunks were re-ingested or deleted since the answer.
+        cited = [
+            (int(c["n"]), uuid.UUID(c["chunk_id"]))
+            for c in message.citations
+            if c.get("chunk_id") and c.get("n")
+        ]
+        if not cited or any(chunk_id not in content_by_id for _, chunk_id in cited):
+            # Any cited chunk re-ingested/deleted -> the judge context would
+            # be incomplete; skip rather than under-score a correct answer.
             skipped_missing_chunks += 1
             continue
-        chunk_dicts = [{"content": chunk.content} for chunk in chunks]
+        # Rebuild the context so [n] in the answer still points at slot n:
+        # build_judge_prompt numbers passages 1..N by position, so pad the
+        # slots between cited numbers.
+        max_n = max(n for n, _ in cited)
+        slot_content = {n: content_by_id[chunk_id] for n, chunk_id in cited}
+        chunk_dicts = [
+            {"content": slot_content.get(n, "(passage not cited by this answer)")}
+            for n in range(1, max_n + 1)
+        ]
         response = await gateway.complete(
             [
                 LLMMessage("system", prompts.JUDGE_SYSTEM),

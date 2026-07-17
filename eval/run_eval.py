@@ -169,7 +169,10 @@ def deterministic_metrics(results: list[ItemResult]) -> dict:
     for result in answerable:
         expected = set(result.expected_docs)
         retrieved = set(result.retrieved_docs)
-        recalls.append(len(expected & retrieved) / len(expected) if expected else 0.0)
+        # Any-of semantics: golden items are single-fact questions, and a
+        # multi-doc expectation means the fact lives in several docs —
+        # retrieving any one of them is a hit.
+        recalls.append(1.0 if expected & retrieved else 0.0)
         if result.retrieved_docs:
             hits = sum(1 for doc in result.retrieved_docs if doc in expected)
             precisions.append(hits / len(result.retrieved_docs))

@@ -1,6 +1,8 @@
 # HelpDeck API + worker image (task 7.1).
 # One image, two commands: the default CMD serves the API; the worker service
 # overrides it with `uv run arq app.workers.main.WorkerSettings`.
+# Build context is the REPO ROOT (docker build -f apps/api/Dockerfile .) so the
+# demo corpus ships with the image for seeding and the demo-org nightly reset.
 FROM python:3.12-slim
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
@@ -12,13 +14,15 @@ ENV UV_COMPILE_BYTECODE=1 \
 WORKDIR /app
 
 # Dependencies first for layer caching.
-COPY pyproject.toml uv.lock ./
+COPY apps/api/pyproject.toml apps/api/uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
-COPY app ./app
-COPY alembic ./alembic
-COPY alembic.ini ./
-COPY scripts ./scripts
+COPY apps/api/app ./app
+COPY apps/api/alembic ./alembic
+COPY apps/api/alembic.ini ./
+COPY apps/api/scripts ./scripts
+# Demo corpus at /app/eval/fixtures/corpus (found by find_corpus_dir()).
+COPY eval/fixtures/corpus ./eval/fixtures/corpus
 
 RUN useradd --create-home --uid 10001 helpdeck \
     && chown -R helpdeck:helpdeck /app

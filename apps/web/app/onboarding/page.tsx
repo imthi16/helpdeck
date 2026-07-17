@@ -108,7 +108,9 @@ export default function OnboardingPage() {
     }
   }
 
-  const snippet = `<script src="https://cdn.helpdeck.example/helpdeck.js" data-public-key="${widgetKey ?? "pk_your_key"}" defer></script>`;
+  const snippet = widgetKey
+    ? `<script src="https://cdn.helpdeck.example/helpdeck.js" data-public-key="${widgetKey}" defer></script>`
+    : null;
 
   return (
     <main className="flex min-h-screen items-center justify-center p-6">
@@ -179,12 +181,19 @@ export default function OnboardingPage() {
               <p className="text-sm text-muted-foreground">
                 Drop this snippet into any website to embed your assistant.
               </p>
-              <pre
-                className="overflow-x-auto rounded bg-muted p-3 text-xs"
-                data-testid="embed-snippet"
-              >
-                {snippet}
-              </pre>
+              {snippet ? (
+                <pre
+                  className="overflow-x-auto rounded bg-muted p-3 text-xs"
+                  data-testid="embed-snippet"
+                >
+                  {snippet}
+                </pre>
+              ) : (
+                <p className="rounded bg-muted p-3 text-xs" data-testid="embed-snippet-pending">
+                  Loading your widget key… If this doesn&apos;t resolve, find the snippet later
+                  under Settings → API keys.
+                </p>
+              )}
               <Button onClick={finish} disabled={busy} data-testid="finish-onboarding">
                 {busy ? "Finishing…" : "Go to dashboard"}
               </Button>

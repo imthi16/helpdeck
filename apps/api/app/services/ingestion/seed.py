@@ -23,6 +23,28 @@ DEMO_ORG_NAME = "Northwind Coffee Supply (Demo)"
 CORPUS_GLOB = "*.md"
 
 
+def find_corpus_dir() -> Path:
+    """Locate the demo corpus in any deployment shape.
+
+    Checks, in order: the DEMO_CORPUS_DIR env override, then every ancestor of
+    this module for ``eval/fixtures/corpus`` — which finds the repo root in a
+    source checkout and ``/app`` inside the Docker image (the Dockerfile copies
+    the corpus there). Never assumes a fixed ``parents[N]`` depth.
+    """
+    import os
+
+    override = os.environ.get("DEMO_CORPUS_DIR")
+    if override:
+        return Path(override)
+    for ancestor in Path(__file__).resolve().parents:
+        candidate = ancestor / "eval" / "fixtures" / "corpus"
+        if candidate.is_dir():
+            return candidate
+    raise FileNotFoundError(
+        "demo corpus not found: set DEMO_CORPUS_DIR or ship eval/fixtures/corpus"
+    )
+
+
 @dataclass
 class SeedSummary:
     org_id: uuid.UUID
