@@ -10,8 +10,12 @@ services:
     name: helpdeck-api
     runtime: docker
     dockerfilePath: apps/api/Dockerfile
-    dockerContext: apps/api
+    dockerContext: .
     plan: starter
+    # Deploys are triggered exclusively by the CD workflow's deploy hooks
+    # (.github/workflows/deploy.yml); without this, Render would also deploy
+    # on every push and each merge would run two deploys + double migrations.
+    autoDeployTrigger: off
     healthCheckPath: /health
     # Migrations run before every deploy goes live (superuser DATABASE_URL).
     preDeployCommand: uv run --no-sync alembic upgrade head
@@ -19,13 +23,24 @@ services:
       - fromGroup: helpdeck-secrets
       - key: COOKIE_SECURE
         value: "true"
+      # Vercel dashboard + Render API are different sites: cookies must be
+      # SameSite=None (or serve both under one custom domain — docs/deploy.md).
+      - key: COOKIE_SAMESITE
+        value: "none"
 
+  # NOTE (storage): PDF/text uploads write raw bytes to STORAGE_DIR on the API
+  # service, and the worker reads the same key. Render services do NOT share a
+  # filesystem, so with the default LocalFileStorage only URL ingestion works
+  # across the two services. Until object storage lands (tracked in the repo
+  # issues), either run the worker inside the API service (see docs/deploy.md
+  # "single-service option") or point STORAGE_DIR at a shared mount.
   - type: worker
     name: helpdeck-worker
     runtime: docker
     dockerfilePath: apps/api/Dockerfile
-    dockerContext: apps/api
+    dockerContext: .
     plan: starter
+    autoDeployTrigger: off
     dockerCommand: uv run --no-sync arq app.workers.main.WorkerSettings
     envVars:
       - fromGroup: helpdeck-secrets

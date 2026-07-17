@@ -99,7 +99,9 @@ async def test_actions_produce_audit_rows(owner_org, db_sessionmaker: Sessionmak
             "key.revoked",
             "key.created",
         ]
-        assert listing.json()[0]["payload"]["email"] == "aud@example.com"
+        # Payloads are PII-free: the invite is referenced by id, never email.
+        assert listing.json()[0]["payload"] == {"role": "viewer"}
+        assert "email" not in listing.json()[0]["payload"]
 
 
 async def test_login_and_signup_are_audited(db_sessionmaker: Sessionmaker) -> None:
