@@ -28,6 +28,7 @@ class MessageResponse(BaseModel):
     content: str
     citations: list[dict[str, Any]]
     confidence: float | None
+    feedback: int | None = None  # widget thumbs: -1 down, +1 up
     created_at: datetime
 
 

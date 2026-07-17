@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
-import { fetchConfig, sendFeedback, streamChat, type Citation, type WidgetConfig } from "./api";
+import { fetchConfig, sendCsat, sendFeedback, streamChat, type Citation, type WidgetConfig } from "./api";
 import { MessageContent } from "./MessageContent";
 import { closeWidget, readParams } from "./params";
 import { loadSession, saveSession, type StoredMessage } from "./storage";
@@ -16,15 +16,66 @@ export function App() {
   const conversationId = useRef<string | undefined>(loadSession(params.publicKey).conversationId);
   const scroller = useRef<HTMLDivElement>(null);
   const color = config?.color ?? params.color;
+  // CSAT (task 5.6): ask once per session, on close or after 3 min idle.
+  const [csatOpen, setCsatOpen] = useState(false);
+  const [csatThanks, setCsatThanks] = useState(false);
+  const csatDone = useRef<boolean>(loadSession(params.publicKey).csatDone ?? false);
+  const idleTimer = useRef<ReturnType<typeof setTimeout>>();
+
+  const hasAnswer = messages.some((m) => m.role === "assistant" && m.content);
+  const shouldAskCsat = () => hasAnswer && !csatDone.current && !!conversationId.current;
+
+  useEffect(() => {
+    clearTimeout(idleTimer.current);
+    const last = messages[messages.length - 1];
+    if (last?.role === "assistant" && !streaming && shouldAskCsat()) {
+      idleTimer.current = setTimeout(() => setCsatOpen(true), 180_000);
+    }
+    return () => clearTimeout(idleTimer.current);
+  }, [messages, streaming]);
+
+  function finishCsat() {
+    // The rated conversation is closed server-side; drop it locally so the
+    // next question starts a fresh conversation (which can be rated again).
+    conversationId.current = undefined;
+    csatDone.current = false;
+    setCsatOpen(false);
+  }
+
+  async function rateCsat(score: number) {
+    if (!params.apiUrl || !conversationId.current) return;
+    const ratedConversation = conversationId.current;
+    finishCsat();
+    setCsatThanks(true);
+    setTimeout(() => setCsatThanks(false), 2000);
+    await sendCsat(params.apiUrl, params.publicKey, ratedConversation, score);
+  }
+
+  function onClose() {
+    if (csatOpen) {
+      finishCsat();
+      closeWidget();
+      return;
+    }
+    if (shouldAskCsat()) {
+      setCsatOpen(true);
+      return;
+    }
+    closeWidget();
+  }
 
   useEffect(() => {
     if (params.apiUrl) fetchConfig(params.apiUrl, params.publicKey).then(setConfig).catch(() => undefined);
   }, []);
 
   useEffect(() => {
-    saveSession(params.publicKey, { conversationId: conversationId.current, messages });
+    saveSession(params.publicKey, {
+      conversationId: conversationId.current,
+      messages,
+      csatDone: csatDone.current,
+    });
     scroller.current?.scrollTo({ top: scroller.current.scrollHeight });
-  }, [messages]);
+  }, [messages, csatOpen]);
 
   const patchLast = (patch: (m: StoredMessage) => StoredMessage) =>
     setMessages((prev) => {
@@ -76,7 +127,7 @@ export function App() {
         <span class="title" data-testid="widget-title">
           {config?.org_name ?? "HelpDeck"}
         </span>
-        <button class="close" aria-label="Close chat" onClick={closeWidget}>
+        <button class="close" aria-label="Close chat" onClick={onClose}>
           &#10005;
         </button>
       </header>
@@ -138,6 +189,28 @@ export function App() {
             </button>
           </div>
           <p>{activeCitation.snippet}</p>
+        </div>
+      )}
+
+      {csatOpen && (
+        <div class="csat" data-testid="csat-prompt">
+          <span>How was this conversation?</span>
+          <div class="csat-scores">
+            {[1, 2, 3, 4, 5].map((score) => (
+              <button
+                aria-label={`Rate ${score} of 5`}
+                data-testid={`csat-${score}`}
+                onClick={() => void rateCsat(score)}
+              >
+                {score}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {csatThanks && (
+        <div class="csat" data-testid="csat-thanks">
+          <span>Thanks for your feedback!</span>
         </div>
       )}
 

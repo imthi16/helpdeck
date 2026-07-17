@@ -12,6 +12,8 @@ export interface StoredMessage {
 export interface StoredSession {
   conversationId?: string;
   messages: StoredMessage[];
+  // Set once the user rated (or dismissed) the CSAT prompt for this session.
+  csatDone?: boolean;
 }
 
 const key = (publicKey: string) => `helpdeck:session:${publicKey}`;
