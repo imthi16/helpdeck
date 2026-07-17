@@ -9,10 +9,11 @@ Redis for ``CACHE_TTL_SECONDS`` per (org, window) because embedding the
 candidates is the only real cost here.
 
 Definitions:
-- escalation_rate: share of conversations in the window with status
-  ``escalated``.
+- escalation_rate: share of conversations in the window that ever raised an
+  escalation (an ``escalations`` row exists — current status is not enough,
+  because resolving a handoff flips status back to ``closed``).
 - deflection_rate: among *answered* conversations (≥1 assistant message),
-  the share that did NOT escalate — i.e. resolved without a human.
+  the share that never escalated — i.e. resolved without a human.
 """
 
 import datetime
@@ -128,7 +129,9 @@ async def _unanswered_candidates(
             SELECT m.role, m.content, m.created_at,
                    lead(m.role) OVER w AS next_role,
                    lead(m.confidence) OVER w AS next_confidence,
-                   c.status AS conv_status
+                   EXISTS (
+                       SELECT 1 FROM escalations e WHERE e.conversation_id = c.id
+                   ) AS ever_escalated
             FROM messages m
             JOIN conversations c ON c.id = m.conversation_id
             WHERE m.org_id = :org AND m.created_at >= :since
@@ -136,7 +139,7 @@ async def _unanswered_candidates(
         )
         SELECT content, created_at FROM ordered
         WHERE role = 'user' AND (
-            conv_status = 'escalated'
+            ever_escalated
             OR (next_role = 'assistant' AND coalesce(next_confidence, 0) < :threshold)
         )
         ORDER BY created_at DESC
@@ -182,13 +185,19 @@ async def compute_overview(
                     """
                     SELECT
                       count(*) AS total,
-                      count(*) FILTER (WHERE status = 'escalated') AS escalated,
+                      count(*) FILTER (WHERE EXISTS (
+                        SELECT 1 FROM escalations e
+                        WHERE e.conversation_id = conversations.id
+                      )) AS escalated,
                       count(*) FILTER (WHERE EXISTS (
                         SELECT 1 FROM messages m
                         WHERE m.conversation_id = conversations.id
                           AND m.role = 'assistant'
                       )) AS answered,
-                      count(*) FILTER (WHERE status != 'escalated' AND EXISTS (
+                      count(*) FILTER (WHERE NOT EXISTS (
+                        SELECT 1 FROM escalations e
+                        WHERE e.conversation_id = conversations.id
+                      ) AND EXISTS (
                         SELECT 1 FROM messages m
                         WHERE m.conversation_id = conversations.id
                           AND m.role = 'assistant'
