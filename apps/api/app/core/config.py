@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     web_base_url: str = "http://localhost:3000"
     # Optional webhook (Slack-compatible {"text": ...}) for quality alerts.
     alert_webhook_url: str = ""
+    # Public demo org (task 7.3): read-only via block_demo_writes; nightly
+    # reset cron re-ingests its corpus. Empty = no demo org.
+    demo_org_id: str = ""
 
 
 @lru_cache

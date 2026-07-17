@@ -12,6 +12,7 @@ from app.models import ApiKey, MembershipRole
 from app.schemas.api_keys import ApiKeyCreatedResponse, ApiKeyCreateRequest, ApiKeyResponse
 from app.services import api_keys as keys_service
 from app.services.audit import KEY_CREATED, KEY_REVOKED, record_audit
+from app.services.demo import block_demo_writes
 
 router = APIRouter(prefix="/api/v1/keys", tags=["keys"])
 
@@ -22,6 +23,7 @@ def get_keys_sessionmaker() -> async_sessionmaker[AsyncSession]:
 
 SessionmakerDep = Annotated[async_sessionmaker[AsyncSession], Depends(get_keys_sessionmaker)]
 OwnerDep = Annotated[MembershipContext, Depends(require_role(MembershipRole.owner))]
+demo_guard = Depends(block_demo_writes)  # the public demo org is read-only (7.3)
 
 
 def _to_response(key: ApiKey) -> ApiKeyResponse:
@@ -45,7 +47,12 @@ async def list_keys(sessionmaker: SessionmakerDep, caller: OwnerDep) -> list[Api
     return [_to_response(key) for key in keys]
 
 
-@router.post("", response_model=ApiKeyCreatedResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=ApiKeyCreatedResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[demo_guard],
+)
 async def create_key(
     payload: ApiKeyCreateRequest, sessionmaker: SessionmakerDep, caller: OwnerDep
 ) -> ApiKeyCreatedResponse:
@@ -71,7 +78,7 @@ async def create_key(
     return response
 
 
-@router.delete("/{key_id}", response_model=ApiKeyResponse)
+@router.delete("/{key_id}", response_model=ApiKeyResponse, dependencies=[demo_guard])
 async def revoke_key(
     key_id: uuid.UUID, sessionmaker: SessionmakerDep, caller: OwnerDep
 ) -> ApiKeyResponse:

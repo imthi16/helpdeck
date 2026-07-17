@@ -84,22 +84,37 @@ async def _reset_org(
         return org.id
 
 
-async def seed_corpus(
+async def ingest_corpus_into(
     sessionmaker: async_sessionmaker[AsyncSession],
     embedding_service: EmbeddingService,
     storage: ContentStorage,
     *,
     corpus_dir: Path,
-    org_name: str = DEMO_ORG_NAME,
-    public_key: str | None = None,
+    org_id: uuid.UUID,
+    replace: bool = False,
 ) -> SeedSummary:
+    """Ingest every corpus file into an EXISTING org (id stays stable).
+
+    With ``replace`` the org's current documents (and cascaded chunks) are
+    dropped first — the demo-org nightly reset uses this so ``DEMO_ORG_ID``
+    keeps pointing at the same row.
+    """
     files = await asyncio.to_thread(lambda: sorted(corpus_dir.glob(CORPUS_GLOB)))
     if not files:
         raise FileNotFoundError(f"no {CORPUS_GLOB} files found in {corpus_dir}")
 
-    org_id = await _reset_org(sessionmaker, org_name, public_key)
-    total_chunks = 0
+    if replace:
+        async with sessionmaker() as session:
+            existing = (
+                (await session.execute(select(Document).where(Document.org_id == org_id)))
+                .scalars()
+                .all()
+            )
+            for document in existing:
+                await session.delete(document)
+            await session.commit()
 
+    total_chunks = 0
     for path in files:
         async with sessionmaker() as session:
             document = Document(
@@ -120,6 +135,25 @@ async def seed_corpus(
             )
 
     return SeedSummary(org_id=org_id, document_count=len(files), chunk_count=total_chunks)
+
+
+async def seed_corpus(
+    sessionmaker: async_sessionmaker[AsyncSession],
+    embedding_service: EmbeddingService,
+    storage: ContentStorage,
+    *,
+    corpus_dir: Path,
+    org_name: str = DEMO_ORG_NAME,
+    public_key: str | None = None,
+) -> SeedSummary:
+    org_id = await _reset_org(sessionmaker, org_name, public_key)
+    return await ingest_corpus_into(
+        sessionmaker,
+        embedding_service,
+        storage,
+        corpus_dir=corpus_dir,
+        org_id=org_id,
+    )
 
 
 async def count_ready_documents(
