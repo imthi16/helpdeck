@@ -24,6 +24,12 @@ jobs:
       RENDER_DEPLOY_HOOK_API: ${{ secrets.RENDER_DEPLOY_HOOK_API }}
       RENDER_DEPLOY_HOOK_WORKER: ${{ secrets.RENDER_DEPLOY_HOOK_WORKER }}
     steps:
+      - name: Refuse half-configured deploys
+        if: (env.RENDER_DEPLOY_HOOK_API == '') != (env.RENDER_DEPLOY_HOOK_WORKER == '')
+        run: |
+          echo "::error::Exactly one RENDER_DEPLOY_HOOK_* secret is set — deploying only half of the backend would leave API and worker revisions out of sync. Configure both hooks (docs/deploy.md §4)."
+          exit 1
+
       - name: Trigger Render deploy (API)
         if: env.RENDER_DEPLOY_HOOK_API != ''
         run: curl -fsS "$RENDER_DEPLOY_HOOK_API" > /dev/null && echo "API deploy triggered"

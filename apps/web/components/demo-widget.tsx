@@ -9,8 +9,10 @@ import Script from "next/script";
  */
 export function DemoWidget() {
   const publicKey = process.env.NEXT_PUBLIC_DEMO_WIDGET_KEY;
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-  const src = process.env.NEXT_PUBLIC_WIDGET_URL ?? "/helpdeck.js";
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  // || not ??: envs copied from .env.example leave the var as "" and an
+  // empty src would silently break the demo bubble.
+  const src = process.env.NEXT_PUBLIC_WIDGET_URL || "/helpdeck.js";
   if (!publicKey) return null;
   return (
     <Script

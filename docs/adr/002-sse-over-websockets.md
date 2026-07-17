@@ -22,8 +22,7 @@ Events (SSE), or long-polling.
   middleboxes that routinely break WebSocket upgrades — which matters for a
   widget embedded on arbitrary customer sites.
 - **Simpler auth and ops.** The same cookie/header auth, CORS, and rate
-  limiting apply unchanged; no connection registry, no reconnect protocol to
-  design (browsers reconnect EventSource-style consumers trivially).
+  limiting apply unchanged; no connection registry or socket lifecycle.
 - **Server simplicity.** Each turn is a normal request handler with an async
   generator — no socket lifecycle to manage across LangGraph runs.
 
@@ -33,3 +32,8 @@ Events (SSE), or long-polling.
   a second SSE channel or a WebSocket added for that feature alone.
 - Buffering middle-boxes must be told not to buffer (`X-Accel-Buffering:
   no`), and heartbeats keep idle connections alive.
+- **No automatic recovery today.** Both clients stream a `POST` response via
+  `fetch`, not a native `EventSource`, so a dropped connection simply ends
+  the turn — nothing reconnects or resumes, and naively retrying the POST
+  would run (and bill) the turn twice. An idempotent resume protocol is
+  future work if interrupted turns become a real problem.

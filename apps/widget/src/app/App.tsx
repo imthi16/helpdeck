@@ -35,16 +35,20 @@ export function App() {
   }, [messages, streaming]);
 
   function finishCsat() {
-    csatDone.current = true;
+    // The rated conversation is closed server-side; drop it locally so the
+    // next question starts a fresh conversation (which can be rated again).
+    conversationId.current = undefined;
+    csatDone.current = false;
     setCsatOpen(false);
   }
 
   async function rateCsat(score: number) {
     if (!params.apiUrl || !conversationId.current) return;
+    const ratedConversation = conversationId.current;
     finishCsat();
     setCsatThanks(true);
     setTimeout(() => setCsatThanks(false), 2000);
-    await sendCsat(params.apiUrl, params.publicKey, conversationId.current, score);
+    await sendCsat(params.apiUrl, params.publicKey, ratedConversation, score);
   }
 
   function onClose() {

@@ -198,8 +198,10 @@ async def create_invite(
             actor_user_id=caller.user.id,
             action=MEMBER_INVITED,
             target_type="invitation",
+            # No email in the payload: audit rows are append-only and outlive
+            # invite revocation/user deletion (PII-free payload contract).
             target_id=str(invitation.id),
-            payload={"email": invitation.email, "role": invitation.role.value},
+            payload={"role": invitation.role.value},
         )
         await session.commit()
     return response
@@ -223,7 +225,6 @@ async def revoke_invite(
             action=INVITE_REVOKED,
             target_type="invitation",
             target_id=str(target.id),
-            payload={"email": target.email},
         )
         await session.delete(target)
         await session.commit()

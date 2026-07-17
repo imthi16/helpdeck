@@ -6,6 +6,7 @@ written only once the turn completes, so a mid-stream disconnect leaves no
 orphaned assistant row.
 """
 
+import asyncio
 import json
 import uuid
 from collections.abc import AsyncIterator
@@ -115,6 +116,7 @@ async def _replay_cached(
     cached: CachedAnswer,
     conversation_id: uuid.UUID,
     message_id: uuid.UUID,
+    trace_id: str | None = None,
 ) -> AsyncIterator[ServerSentEvent]:
     yield _sse("status", {"stage": "cached"})
     if cached.content:
@@ -129,6 +131,7 @@ async def _replay_cached(
             "confidence": cached.confidence,
             "escalated": cached.escalated,
             "cached": True,
+            "trace_id": trace_id,
         },
     )
 
@@ -203,7 +206,7 @@ async def run_chat_stream(
             trace_id=cached_trace_id,
         )
         return EventSourceResponse(
-            _replay_cached(cached, resolved_conversation_id, message_id),
+            _replay_cached(cached, resolved_conversation_id, message_id, cached_trace_id),
             ping=HEARTBEAT_SECONDS,
             headers=headers,
         )
@@ -329,6 +332,13 @@ async def run_chat_stream(
                     "trace_id": trace_id,
                 },
             )
+        except asyncio.CancelledError:
+            # Client disconnected mid-stream; the turn never completed, so do
+            # not record a successful trace with empty output.
+            failed = True
+            if turn_span is not None:
+                turn_span.update(level="WARNING", status_message="client disconnected")
+            raise
         except Exception as exc:  # noqa: BLE001 - surface any failure as an SSE error
             failed = True
             if turn_span is not None:
