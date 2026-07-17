@@ -7,7 +7,7 @@
 
 ## Status
 
-- **Current phase:** 5 (complete) → 6 next
+- **Current phase:** 6 (complete) → 7 next
 - **Last updated:** 2026-07-15
 - **Blockers:** none
 
@@ -159,7 +159,7 @@
       *Verify:* a deliberately weakened prompt (test branch) fails the gate; revert passes.
 - [x] **6.5 Online sampling.** Nightly arq job: sample 5–10% of the day's production conversations → judge-based faithfulness scoring → results to Langfuse scores + `eval_runs`; alert (log/webhook) if 7-day faithfulness drops > 5 points.
       *Verify:* job runs against seeded traffic; scores visible.
-- [ ] **6.6 Surface the scores.** Playground debug panel shows per-answer faithfulness; Analytics gets a "Quality" card (latest eval metrics + trend).
+- [x] **6.6 Surface the scores.** Playground debug panel shows per-answer faithfulness; Analytics gets a "Quality" card (latest eval metrics + trend).
       *Verify:* visible and correct against latest `eval_runs`.
 
 **Exit criteria:** CI gate demonstrably blocks regressions; Langfuse traces complete; quality metrics visible in-product.

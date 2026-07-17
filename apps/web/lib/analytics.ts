@@ -22,3 +22,20 @@ export interface AnalyticsOverview {
 export function fetchAnalyticsOverview(days = 30): Promise<AnalyticsOverview> {
   return api<AnalyticsOverview>(`/api/v1/analytics/overview?days=${days}`);
 }
+
+export interface QualityRun {
+  kind: string;
+  dataset: string;
+  item_count: number;
+  metrics: Record<string, number | null>;
+  created_at: string;
+}
+
+export interface Quality {
+  latest: QualityRun | null;
+  trend: QualityRun[];
+}
+
+export function fetchQuality(): Promise<Quality> {
+  return api<Quality>("/api/v1/analytics/quality");
+}

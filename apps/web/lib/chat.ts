@@ -18,6 +18,7 @@ export interface DebugChunk {
 export interface DebugInfo {
   intent: string | null;
   model: string | null;
+  trace_id: string | null;
   confidence: number | null;
   latency_ms: number;
   tokens_in: number | null;
