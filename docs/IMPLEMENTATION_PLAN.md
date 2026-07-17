@@ -157,7 +157,7 @@
       *Verify:* full run completes on the golden set; report saved.
 - [x] **6.4 CI eval gate.** CI job (on PRs touching `app/agent`, `app/services/retrieval*`, prompts, or `eval/`): run eval on a 30-item fast subset; FAIL if faithfulness < 0.85 or context_recall < 0.70 or refusal-accuracy < 0.90. Full set runs nightly via scheduled workflow.
       *Verify:* a deliberately weakened prompt (test branch) fails the gate; revert passes.
-- [ ] **6.5 Online sampling.** Nightly arq job: sample 5–10% of the day's production conversations → judge-based faithfulness scoring → results to Langfuse scores + `eval_runs`; alert (log/webhook) if 7-day faithfulness drops > 5 points.
+- [x] **6.5 Online sampling.** Nightly arq job: sample 5–10% of the day's production conversations → judge-based faithfulness scoring → results to Langfuse scores + `eval_runs`; alert (log/webhook) if 7-day faithfulness drops > 5 points.
       *Verify:* job runs against seeded traffic; scores visible.
 - [ ] **6.6 Surface the scores.** Playground debug panel shows per-answer faithfulness; Analytics gets a "Quality" card (latest eval metrics + trend).
       *Verify:* visible and correct against latest `eval_runs`.
