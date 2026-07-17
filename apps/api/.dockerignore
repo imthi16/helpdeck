@@ -1,0 +1,8 @@
+.venv/
+.pytest_cache/
+__pycache__/
+**/__pycache__/
+tests/
+storage/
+.e2e-widget-storage/
+.env
