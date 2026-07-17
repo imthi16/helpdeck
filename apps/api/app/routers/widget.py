@@ -7,6 +7,7 @@ Origin allowlist, and requests are rate limited per key and per IP.
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sse_starlette.sse import EventSourceResponse
 
@@ -213,10 +214,27 @@ async def widget_csat(
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="conversation not found"
             )
-        if conversation.csat_score is not None:
+        # Atomic conditional update: two concurrent ratings can both read
+        # csat_score IS NULL; the WHERE clause makes exactly one of them win
+        # and the loser 409s instead of silently overwriting the score.
+        result = await session.execute(
+            update(Conversation)
+            .where(
+                Conversation.id == payload.conversation_id,
+                Conversation.org_id == org.id,
+                Conversation.csat_score.is_(None),
+            )
+            .values(csat_score=payload.score)
+        )
+        if result.rowcount == 0:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="already rated")
-        conversation.csat_score = payload.score
-        if conversation.status == ConversationStatus.open:
-            conversation.status = ConversationStatus.closed
+        await session.execute(
+            update(Conversation)
+            .where(
+                Conversation.id == payload.conversation_id,
+                Conversation.status == ConversationStatus.open,
+            )
+            .values(status=ConversationStatus.closed)
+        )
     # CSAT scores the whole session (all turn traces share the conversation id).
     record_score(name="csat", value=float(payload.score), session_id=str(payload.conversation_id))

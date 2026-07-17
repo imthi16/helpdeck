@@ -13,6 +13,7 @@ from app.models import (
     Conversation,
     ConversationChannel,
     ConversationStatus,
+    Escalation,
     Membership,
     MembershipRole,
     Message,
@@ -100,6 +101,16 @@ async def seeded_traffic(db_sessionmaker: Sessionmaker):
         empty = conversation(ConversationStatus.open)
         session.add_all([*escalated, *resolved, empty])
         await session.flush()
+        # Real escalation rows: rates are computed from escalation history,
+        # not current status (resolving flips status back to closed). One of
+        # the two is already "resolved" to prove history still counts.
+        escalated[1].status = ConversationStatus.closed
+        session.add_all(
+            [
+                Escalation(org_id=org_id, conversation_id=escalated[0].id, reason="test"),
+                Escalation(org_id=org_id, conversation_id=escalated[1].id, reason="test"),
+            ]
+        )
 
         # Explicit, increasing created_at: in production user/assistant rows
         # commit in separate transactions so their timestamps differ, but a
