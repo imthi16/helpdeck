@@ -31,7 +31,9 @@ export function signup(input: {
   email: string;
   password: string;
   name: string;
-  org_name: string;
+  // Exactly one of: create an org, or join one via an invite link.
+  org_name?: string;
+  invite_token?: string;
 }): Promise<SessionUser> {
   return api<SessionUser>("/auth/signup", {
     method: "POST",

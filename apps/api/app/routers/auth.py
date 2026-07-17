@@ -15,12 +15,14 @@ from app.core.security import (
 )
 from app.schemas.auth import LoginRequest, SignupRequest, UserResponse
 from app.services.auth import (
+    AuthError,
     EmailAlreadyExists,
     InvalidCredentials,
     authenticate,
     load_user_response,
     signup,
 )
+from app.services.members import InvalidInvitation
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -92,6 +94,11 @@ async def signup_endpoint(
     response: Response,
     sessionmaker: Annotated[async_sessionmaker[AsyncSession], Depends(get_auth_sessionmaker)],
 ) -> UserResponse:
+    if payload.org_name is None and payload.invite_token is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="org_name or invite_token required",
+        )
     async with sessionmaker() as session:
         try:
             user = await signup(
@@ -100,11 +107,18 @@ async def signup_endpoint(
                 password=payload.password,
                 name=payload.name,
                 org_name=payload.org_name,
+                invite_token=payload.invite_token,
             )
         except EmailAlreadyExists as exc:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT, detail="email already registered"
             ) from exc
+        except InvalidInvitation as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="invalid or expired invite"
+            ) from exc
+        except AuthError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT) from exc
         user_response = await load_user_response(session, user.id)
 
     assert user_response is not None

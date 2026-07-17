@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -17,8 +17,10 @@ import { Label } from "@/components/ui/label";
 import { ApiError } from "@/lib/api";
 import { signup } from "@/lib/session";
 
-export default function SignupPage() {
+function SignupForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const inviteToken = searchParams.get("invite");
   const [form, setForm] = useState({
     name: "",
     org_name: "",
@@ -38,8 +40,17 @@ export default function SignupPage() {
     setError(null);
     setSubmitting(true);
     try {
-      await signup(form);
-      router.replace("/onboarding");
+      await signup(
+        inviteToken
+          ? {
+              name: form.name,
+              email: form.email,
+              password: form.password,
+              invite_token: inviteToken,
+            }
+          : { ...form },
+      );
+      router.replace(inviteToken ? "/dashboard" : "/onboarding");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Sign up failed");
     } finally {
@@ -51,8 +62,12 @@ export default function SignupPage() {
     <main className="flex min-h-screen items-center justify-center p-8">
       <Card className="w-full max-w-sm">
         <CardHeader>
-          <CardTitle>Create your HelpDeck</CardTitle>
-          <CardDescription>Set up your workspace in seconds.</CardDescription>
+          <CardTitle>{inviteToken ? "Join your team" : "Create your HelpDeck"}</CardTitle>
+          <CardDescription>
+            {inviteToken
+              ? "You've been invited — create your account to join the organization."
+              : "Set up your workspace in seconds."}
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={onSubmit} className="flex flex-col gap-4">
@@ -60,15 +75,17 @@ export default function SignupPage() {
               <Label htmlFor="name">Your name</Label>
               <Input id="name" value={form.name} onChange={update("name")} />
             </div>
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="org_name">Organization name</Label>
-              <Input
-                id="org_name"
-                required
-                value={form.org_name}
-                onChange={update("org_name")}
-              />
-            </div>
+            {!inviteToken && (
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="org_name">Organization name</Label>
+                <Input
+                  id="org_name"
+                  required
+                  value={form.org_name}
+                  onChange={update("org_name")}
+                />
+              </div>
+            )}
             <div className="flex flex-col gap-2">
               <Label htmlFor="email">Email</Label>
               <Input
@@ -96,11 +113,14 @@ export default function SignupPage() {
               </p>
             )}
             <Button type="submit" disabled={submitting}>
-              {submitting ? "Creating…" : "Create account"}
+              {submitting ? "Creating…" : inviteToken ? "Join organization" : "Create account"}
             </Button>
             <p className="text-sm text-muted-foreground">
               Already have an account?{" "}
-              <Link href="/login" className="underline">
+              <Link
+                href={inviteToken ? `/login?next=/invite/${inviteToken}` : "/login"}
+                className="underline"
+              >
                 Log in
               </Link>
             </p>
@@ -108,5 +128,13 @@ export default function SignupPage() {
         </CardContent>
       </Card>
     </main>
+  );
+}
+
+export default function SignupPage() {
+  return (
+    <Suspense>
+      <SignupForm />
+    </Suspense>
   );
 }

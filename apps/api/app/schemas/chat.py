@@ -6,8 +6,9 @@ from app.models import ConversationChannel
 
 
 class ChatRequest(BaseModel):
-    # org_id is supplied in the body until Phase 3 auth derives it from a token.
-    org_id: uuid.UUID
+    # Optional since 5.2: the org is derived from the caller's membership; if
+    # supplied it must match (the endpoint 403s otherwise).
+    org_id: uuid.UUID | None = None
     message: str = Field(min_length=1, max_length=4000)
     conversation_id: uuid.UUID | None = None
     channel: ConversationChannel = ConversationChannel.playground

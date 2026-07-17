@@ -8,17 +8,17 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.db import app_session_factory, tenant_session
+from app.core.deps import MembershipDep, require_role
 from app.models import (
     Conversation,
     ConversationChannel,
     ConversationStatus,
     Escalation,
     EscalationStatus,
+    MembershipRole,
     Message,
     MessageRole,
 )
-from app.routers.auth import get_current_user
-from app.schemas.auth import UserResponse
 from app.schemas.conversation import (
     ConversationDetail,
     ConversationSummary,
@@ -36,18 +36,16 @@ def get_conversations_sessionmaker() -> async_sessionmaker[AsyncSession]:
     return app_session_factory
 
 
-def current_org_id(
-    current_user: Annotated[UserResponse, Depends(get_current_user)],
-) -> uuid.UUID:
-    if not current_user.memberships:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="no organization")
-    return current_user.memberships[0].org_id
+def current_org_id(membership: MembershipDep) -> uuid.UUID:
+    return membership.org_id
 
 
 SessionmakerDep = Annotated[
     async_sessionmaker[AsyncSession], Depends(get_conversations_sessionmaker)
 ]
 OrgDep = Annotated[uuid.UUID, Depends(current_org_id)]
+# Inbox actions (resolve, internal reply) are agent+; reads are any member.
+agent_required = Depends(require_role(MembershipRole.agent))
 
 
 async def _load_owned(
@@ -151,7 +149,9 @@ async def get_conversation(
     )
 
 
-@router.post("/{conversation_id}/resolve", response_model=ConversationDetail)
+@router.post(
+    "/{conversation_id}/resolve", response_model=ConversationDetail, dependencies=[agent_required]
+)
 async def resolve_conversation(
     conversation_id: uuid.UUID, sessionmaker: SessionmakerDep, org_id: OrgDep
 ) -> ConversationDetail:
@@ -175,7 +175,9 @@ async def resolve_conversation(
     return await get_conversation(conversation_id, sessionmaker, org_id)
 
 
-@router.post("/{conversation_id}/reply", response_model=ConversationDetail)
+@router.post(
+    "/{conversation_id}/reply", response_model=ConversationDetail, dependencies=[agent_required]
+)
 async def reply_to_conversation(
     conversation_id: uuid.UUID,
     payload: ReplyRequest,

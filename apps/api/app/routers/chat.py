@@ -19,6 +19,7 @@ from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 from app.agent.graph import build_agent_graph
 from app.agent.runner import build_dependencies
 from app.core.db import SessionFactory, app_session_factory, tenant_sessionmaker
+from app.core.deps import MembershipDep
 from app.core.logging import get_logger
 from app.models import Conversation, ConversationChannel, Message, MessageRole
 from app.schemas.chat import ChatRequest
@@ -303,17 +304,24 @@ async def run_chat_stream(
 @router.post("/chat")
 async def chat(
     request: ChatRequest,
+    membership: MembershipDep,
     sessionmaker: Annotated[async_sessionmaker[AsyncSession], Depends(get_chat_sessionmaker)],
     checkpointer: Annotated[Any, Depends(get_chat_checkpointer)],
     gateway: Annotated[LLMGateway, Depends(get_chat_gateway)],
     cache: Annotated[ResponseCache, Depends(get_chat_cache)],
 ) -> EventSourceResponse:
+    # The org comes from the caller's membership — a body org_id is accepted
+    # for backward compatibility but must match (never trusted on its own).
+    if request.org_id is not None and request.org_id != membership.org_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="not a member of this organization"
+        )
     return await run_chat_stream(
         sessionmaker=sessionmaker,
         gateway=gateway,
         checkpointer=checkpointer,
         cache=cache,
-        org_id=request.org_id,
+        org_id=membership.org_id,
         message=request.message,
         conversation_id=request.conversation_id,
         channel=request.channel,

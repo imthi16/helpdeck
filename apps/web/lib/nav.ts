@@ -5,6 +5,7 @@ import {
   LayoutDashboard,
   MessageSquare,
   Settings,
+  Users,
   type LucideIcon,
 } from "lucide-react";
 
@@ -20,5 +21,6 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "Playground", href: "/dashboard/playground", icon: MessageSquare },
   { label: "Conversations", href: "/dashboard/conversations", icon: Inbox },
   { label: "Analytics", href: "/dashboard/analytics", icon: BarChart3 },
+  { label: "Members", href: "/dashboard/members", icon: Users },
   { label: "Settings", href: "/dashboard/settings", icon: Settings },
 ];
