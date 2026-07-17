@@ -6,6 +6,7 @@ written only once the turn completes, so a mid-stream disconnect leaves no
 orphaned assistant row.
 """
 
+import asyncio
 import json
 import uuid
 from collections.abc import AsyncIterator
@@ -25,6 +26,7 @@ from app.models import Conversation, ConversationChannel, Message, MessageRole
 from app.schemas.chat import ChatRequest
 from app.services.cache import CachedAnswer, ResponseCache, compute_kb_version, get_redis
 from app.services.llm import LLMGateway
+from app.services.tracing import start_turn
 
 logger = get_logger(__name__)
 
@@ -89,6 +91,7 @@ async def _persist_message(
     tokens_in: int | None = None,
     tokens_out: int | None = None,
     latency_ms: int | None = None,
+    trace_id: str | None = None,
 ) -> uuid.UUID:
     async with tenant_sm() as session:
         message = Message(
@@ -102,6 +105,7 @@ async def _persist_message(
             tokens_in=tokens_in,
             tokens_out=tokens_out,
             latency_ms=latency_ms,
+            trace_id=trace_id,
         )
         session.add(message)
         await session.flush()  # populate the UUID default before leaving the block
@@ -112,6 +116,7 @@ async def _replay_cached(
     cached: CachedAnswer,
     conversation_id: uuid.UUID,
     message_id: uuid.UUID,
+    trace_id: str | None = None,
 ) -> AsyncIterator[ServerSentEvent]:
     yield _sse("status", {"stage": "cached"})
     if cached.content:
@@ -126,6 +131,7 @@ async def _replay_cached(
             "confidence": cached.confidence,
             "escalated": cached.escalated,
             "cached": True,
+            "trace_id": trace_id,
         },
     )
 
@@ -174,6 +180,20 @@ async def run_chat_stream(
     }
 
     if cached is not None:
+        # Lightweight trace so trace counts still match conversation turns.
+        turn_span = start_turn(
+            message,
+            conversation_id=resolved_conversation_id,
+            org_id=org_id,
+            channel=channel.value,
+            user_identifier=user_identifier,
+            cached=True,
+        )
+        cached_trace_id = None
+        if turn_span is not None:
+            cached_trace_id = turn_span.trace_id
+            turn_span.update(output={"answer": cached.content})
+            turn_span.end()
         message_id = await _persist_message(
             tenant_sm,
             org_id=org_id,
@@ -183,9 +203,10 @@ async def run_chat_stream(
             citations=cached.citations,
             confidence=cached.confidence,
             model_used=cached.model_used,
+            trace_id=cached_trace_id,
         )
         return EventSourceResponse(
-            _replay_cached(cached, resolved_conversation_id, message_id),
+            _replay_cached(cached, resolved_conversation_id, message_id, cached_trace_id),
             ping=HEARTBEAT_SECONDS,
             headers=headers,
         )
@@ -194,6 +215,17 @@ async def run_chat_stream(
         start = perf_counter()
         final: dict[str, Any] = {}
         streamed: list[str] = []
+        # Root span for the whole turn: an explicit object ended in `finally`
+        # (never a context manager across this generator's yields).
+        turn_span = start_turn(
+            message,
+            conversation_id=resolved_conversation_id,
+            org_id=org_id,
+            channel=channel.value,
+            user_identifier=user_identifier,
+        )
+        trace_id = turn_span.trace_id if turn_span is not None else None
+        failed = False
         try:
             deps = build_dependencies(sessionmaker=tenant_sm, gateway=gateway)
             graph = build_agent_graph(deps, checkpointer=checkpointer)
@@ -202,6 +234,9 @@ async def run_chat_stream(
                 "conversation_id": str(resolved_conversation_id),
                 "question": message,
             }
+            if turn_span is not None:
+                initial["trace_id"] = turn_span.trace_id
+                initial["parent_span_id"] = turn_span.id
             config = {"configurable": {"thread_id": str(resolved_conversation_id)}}
 
             async for mode, data in graph.astream(
@@ -241,6 +276,7 @@ async def run_chat_stream(
                 tokens_in=final.get("tokens_in"),
                 tokens_out=final.get("tokens_out"),
                 latency_ms=latency_ms,
+                trace_id=trace_id,
             )
 
             if debug:
@@ -248,6 +284,7 @@ async def run_chat_stream(
                     "debug",
                     {
                         "intent": final.get("intent"),
+                        "trace_id": trace_id,
                         "model": final.get("model_used"),
                         "confidence": confidence,
                         "latency_ms": latency_ms,
@@ -292,11 +329,33 @@ async def run_chat_stream(
                     "confidence": confidence,
                     "escalated": escalated,
                     "cached": False,
+                    "trace_id": trace_id,
                 },
             )
+        except asyncio.CancelledError:
+            # Client disconnected mid-stream; the turn never completed, so do
+            # not record a successful trace with empty output.
+            failed = True
+            if turn_span is not None:
+                turn_span.update(level="WARNING", status_message="client disconnected")
+            raise
         except Exception as exc:  # noqa: BLE001 - surface any failure as an SSE error
+            failed = True
+            if turn_span is not None:
+                turn_span.update(level="ERROR", status_message=str(exc))
             logger.exception("chat_stream_failed", conversation_id=str(resolved_conversation_id))
             yield _sse("error", {"detail": str(exc)})
+        finally:
+            if turn_span is not None:
+                if not failed:
+                    turn_span.update(
+                        output={
+                            "answer": final.get("response", ""),
+                            "confidence": final.get("confidence"),
+                            "escalated": bool(final.get("escalated", False)),
+                        }
+                    )
+                turn_span.end()
 
     return EventSourceResponse(event_stream(), ping=HEARTBEAT_SECONDS, headers=headers)
 

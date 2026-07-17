@@ -36,6 +36,7 @@ from app.services.api_keys import resolve_key, touch_last_used
 from app.services.cache import ResponseCache
 from app.services.llm import LLMGateway
 from app.services.rate_limit import RateLimiter
+from app.services.tracing import record_score
 
 router = APIRouter(prefix="/api/v1/widget", tags=["widget"])
 
@@ -178,6 +179,13 @@ async def widget_feedback(
         if message is None or message.org_id != org.id or message.role != MessageRole.assistant:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="message not found")
         message.feedback = payload.rating
+        trace_id = message.trace_id
+    # Mirror the thumb as a Langfuse score on the turn's trace (no-op offline).
+    record_score(
+        name="user_feedback",
+        value=1.0 if payload.rating > 0 else 0.0,
+        trace_id=trace_id,
+    )
 
 
 @router.post("/csat", status_code=status.HTTP_204_NO_CONTENT)
@@ -228,3 +236,5 @@ async def widget_csat(
             )
             .values(status=ConversationStatus.closed)
         )
+    # CSAT scores the whole session (all turn traces share the conversation id).
+    record_score(name="csat", value=float(payload.score), session_id=str(payload.conversation_id))

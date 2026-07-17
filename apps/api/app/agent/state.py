@@ -26,6 +26,9 @@ class AgentState(TypedDict, total=False):
     org_id: str
     conversation_id: str
     question: str
+    # Langfuse propagation (empty when tracing is off).
+    trace_id: str
+    parent_span_id: str
     intent: str
     chunks: list[dict[str, Any]]
     answer: str

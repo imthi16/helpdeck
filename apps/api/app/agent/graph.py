@@ -20,6 +20,7 @@ from app.models import Conversation, ConversationStatus, Escalation
 from app.services.ingestion.chunker import count_tokens
 from app.services.llm import LLMMessage, LLMRoute
 from app.services.retrieval import HybridRetriever
+from app.services.tracing import node_span
 
 logger = get_logger(__name__)
 
@@ -83,23 +84,37 @@ def _emit(event_type: str, **fields: Any) -> None:
 def build_agent_graph(deps: AgentDependencies, checkpointer: Any = None):
     async def router(state: AgentState) -> AgentState:
         _emit("status", value="routing")
-        response = await deps.gateway.complete(
-            [
-                LLMMessage("system", prompts.ROUTER_SYSTEM),
-                LLMMessage("user", state["question"]),
-            ],
-            route=LLMRoute.cheap,
-        )
-        return {"intent": parse_intent(response.text)}
+        with node_span(state, "agent.router", input={"question": state["question"]}) as span:
+            response = await deps.gateway.complete(
+                [
+                    LLMMessage("system", prompts.ROUTER_SYSTEM),
+                    LLMMessage("user", state["question"]),
+                ],
+                route=LLMRoute.cheap,
+            )
+            intent = parse_intent(response.text)
+            if span is not None:
+                span.update(output={"intent": intent})
+        return {"intent": intent}
 
     async def retrieve(state: AgentState) -> AgentState:
         _emit("status", value="retrieving")
-        retriever = HybridRetriever(deps.sessionmaker, deps.embedding_service)
-        fused = await retriever.search(
-            uuid.UUID(state["org_id"]), state["question"], top_n=max(50, deps.retrieval_top_n)
-        )
-        reranked = await deps.reranker.rerank(state["question"], fused, top_n=deps.retrieval_top_n)
-        chunks = [chunk_to_dict(chunk, i) for i, chunk in enumerate(reranked, start=1)]
+        with node_span(state, "agent.retrieve", input={"question": state["question"]}) as span:
+            retriever = HybridRetriever(deps.sessionmaker, deps.embedding_service)
+            fused = await retriever.search(
+                uuid.UUID(state["org_id"]), state["question"], top_n=max(50, deps.retrieval_top_n)
+            )
+            reranked = await deps.reranker.rerank(
+                state["question"], fused, top_n=deps.retrieval_top_n
+            )
+            chunks = [chunk_to_dict(chunk, i) for i, chunk in enumerate(reranked, start=1)]
+            if span is not None:
+                span.update(
+                    output={
+                        "chunk_ids": [c["chunk_id"] for c in chunks],
+                        "scores": [c["score"] for c in chunks],
+                    }
+                )
         return {"chunks": chunks}
 
     async def answer(state: AgentState) -> AgentState:
@@ -112,11 +127,14 @@ def build_agent_graph(deps: AgentDependencies, checkpointer: Any = None):
             LLMMessage("user", prompts.build_answer_prompt(state["question"], chunks)),
         ]
         pieces: list[str] = []
-        async for piece in deps.gateway.stream(messages, route=LLMRoute.strong):
-            pieces.append(piece)
-            _emit("token", value=piece)
-        text = "".join(pieces).strip()
-        citations = parse_citations(text, chunks)
+        with node_span(state, "agent.answer") as span:
+            async for piece in deps.gateway.stream(messages, route=LLMRoute.strong):
+                pieces.append(piece)
+                _emit("token", value=piece)
+            text = "".join(pieces).strip()
+            citations = parse_citations(text, chunks)
+            if span is not None:
+                span.update(output={"answer": text, "citations": len(citations)})
         prompt_text = "\n".join(m.content for m in messages)
         return {
             "answer": text,
@@ -130,17 +148,21 @@ def build_agent_graph(deps: AgentDependencies, checkpointer: Any = None):
         if not state.get("citations"):
             # Ungrounded answers skip the judge; the gate will escalate them.
             return {"confidence": 0.0}
-        response = await deps.gateway.complete(
-            [
-                LLMMessage("system", prompts.JUDGE_SYSTEM),
-                LLMMessage(
-                    "user",
-                    prompts.build_judge_prompt(state["answer"], state.get("chunks", [])),
-                ),
-            ],
-            route=LLMRoute.cheap,
-        )
-        return {"confidence": parse_confidence(response.text)}
+        with node_span(state, "agent.faithfulness_judge") as span:
+            response = await deps.gateway.complete(
+                [
+                    LLMMessage("system", prompts.JUDGE_SYSTEM),
+                    LLMMessage(
+                        "user",
+                        prompts.build_judge_prompt(state["answer"], state.get("chunks", [])),
+                    ),
+                ],
+                route=LLMRoute.cheap,
+            )
+            confidence = parse_confidence(response.text)
+            if span is not None:
+                span.update(output={"confidence": confidence})
+        return {"confidence": confidence}
 
     async def chitchat(state: AgentState) -> AgentState:
         return {"response": prompts.CHITCHAT_REPLY, "answer": prompts.CHITCHAT_REPLY}
@@ -151,8 +173,9 @@ def build_agent_graph(deps: AgentDependencies, checkpointer: Any = None):
     async def escalate(state: AgentState) -> AgentState:
         reason = _escalation_reason(state, deps.faithfulness_threshold)
         conversation_id = state.get("conversation_id")
-        if conversation_id:
-            await _record_escalation(deps, state, reason, uuid.UUID(conversation_id))
+        with node_span(state, "agent.escalate", output={"reason": reason}):
+            if conversation_id:
+                await _record_escalation(deps, state, reason, uuid.UUID(conversation_id))
         return {
             "escalated": True,
             "escalation_reason": reason,

@@ -169,8 +169,9 @@ class EmbeddingService:
         langfuse = get_langfuse()
         if langfuse is None:
             return await self._embed_batch_with_retry(batch)
-        with langfuse.start_as_current_generation(
+        with langfuse.start_as_current_observation(
             name="embed_texts",
+            as_type="embedding",
             model=self._model,
             input={"batch_size": len(batch)},
         ) as generation:

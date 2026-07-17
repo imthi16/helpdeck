@@ -98,6 +98,8 @@ class Message(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     tokens_in: Mapped[int | None] = mapped_column(Integer, nullable=True)
     tokens_out: Mapped[int | None] = mapped_column(Integer, nullable=True)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Langfuse/W3C trace id of the turn that produced this message (6.1).
+    trace_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     feedback: Mapped[int | None] = mapped_column(Integer, nullable=True)  # -1 down, +1 up
 
 
