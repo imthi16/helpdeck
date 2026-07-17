@@ -79,8 +79,9 @@ async def signup(
             token=org.public_key,
         )
         session.add(widget_key)
-    await session.commit()
-    await session.refresh(user)
+    # No commit here: the caller owns the transaction so signup side effects
+    # and the signup audit row commit atomically (see routers/auth.py).
+    await session.flush()
     return user
 
 
