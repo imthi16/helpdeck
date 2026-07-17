@@ -134,7 +134,7 @@
       *Verify:* matrix test — each role against each sensitive endpoint returns expected 200/403.
 - [x] **5.3 API keys.** `api_keys` table (hashed secret, public widget key, scopes, last_used_at); settings page to create/reveal-once/revoke; widget key = the Phase 4 public key, now real; secret keys for future server-to-server use.
       *Verify:* revoked key immediately 401s; `last_used_at` updates.
-- [ ] **5.4 Audit log.** Append-only `audit_logs` (no RLS; superuser-insert via SECURITY DEFINER function or dedicated writer): auth events, member/role changes, key create/revoke, document delete, settings changes. Read-only viewer in Settings for owners/admins.
+- [x] **5.4 Audit log.** Append-only `audit_logs` (no RLS; superuser-insert via SECURITY DEFINER function or dedicated writer): auth events, member/role changes, key create/revoke, document delete, settings changes. Read-only viewer in Settings for owners/admins.
       *Verify:* actions above produce rows; rows cannot be updated/deleted by app role.
 - [ ] **5.5 Analytics.** Endpoints + dashboard page: conversations over time, deflection rate (resolved without escalation), escalation rate, CSAT average, top unanswered questions (low-confidence/escalated queries clustered by similarity). Recharts/Tremor cards + charts. Consider a nightly rollup table if queries get slow.
       *Verify:* seeded + test traffic renders correct numbers (assert against fixtures).

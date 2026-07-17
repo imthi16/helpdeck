@@ -44,16 +44,21 @@ import { ApiError } from "@/lib/api";
 import {
   createApiKey,
   listApiKeys,
+  listAuditLogs,
   revokeApiKey,
   type ApiKeyItem,
   type ApiKeyType,
+  type AuditLogEntry,
 } from "@/lib/apiKeys";
 import { useSession } from "@/lib/session";
 
 export default function SettingsPage() {
   const { user } = useSession();
-  const isOwner = user?.memberships[0]?.role === "owner";
+  const role = user?.memberships[0]?.role;
+  const isOwner = role === "owner";
+  const isAdmin = role === "owner" || role === "admin";
   const [keys, setKeys] = useState<ApiKeyItem[]>([]);
+  const [auditEntries, setAuditEntries] = useState<AuditLogEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState("");
@@ -76,6 +81,21 @@ export default function SettingsPage() {
       active = false;
     };
   }, [isOwner]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    let active = true;
+    listAuditLogs()
+      .then((rows) => {
+        if (active) setAuditEntries(rows);
+      })
+      .catch(() => {
+        // Audit log stays hidden if it can't be read.
+      });
+    return () => {
+      active = false;
+    };
+  }, [isAdmin]);
 
   async function refresh() {
     try {
@@ -200,6 +220,54 @@ export default function SettingsPage() {
           )}
         </CardContent>
       </Card>
+
+      {isAdmin ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Audit log</CardTitle>
+            <CardDescription>
+              Append-only record of sensitive actions in this organization.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Table data-testid="audit-table">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>When</TableHead>
+                  <TableHead>Action</TableHead>
+                  <TableHead>Target</TableHead>
+                  <TableHead>Details</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {auditEntries.map((entry) => (
+                  <TableRow key={entry.id}>
+                    <TableCell className="whitespace-nowrap">
+                      {new Date(entry.created_at).toLocaleString()}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="secondary">{entry.action}</Badge>
+                    </TableCell>
+                    <TableCell className="font-mono text-xs">
+                      {entry.target_type ? `${entry.target_type}` : "—"}
+                    </TableCell>
+                    <TableCell className="max-w-64 truncate font-mono text-xs">
+                      {JSON.stringify(entry.payload)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {auditEntries.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={4} className="text-muted-foreground">
+                      No entries yet.
+                    </TableCell>
+                  </TableRow>
+                ) : null}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Dialog
         open={createOpen}

@@ -19,6 +19,7 @@ from app.core.db import app_session_factory, tenant_session
 from app.core.deps import MembershipDep, require_role
 from app.models import Chunk, Document, DocumentSourceType, DocumentStatus, MembershipRole
 from app.schemas.document import DocumentCreate, DocumentResponse
+from app.services.audit import DOCUMENT_DELETED, record_audit
 from app.services.queue import ArqIngestQueue, IngestQueue
 from app.services.storage import ContentStorage, document_key, get_storage
 
@@ -217,9 +218,20 @@ async def delete_document(
     document_id: uuid.UUID,
     sessionmaker: SessionmakerDep,
     storage: StorageDep,
-    org_id: OrgDep,
+    membership: MembershipDep,
 ) -> None:
+    org_id = membership.org_id
     async with tenant_session(org_id, session_factory=sessionmaker) as session:
-        await _get_owned_document(session, document_id, org_id)  # 404s if not owned
+        document = await _get_owned_document(session, document_id, org_id)  # 404s if not owned
+        title = document.title
         await session.execute(delete(Document).where(Document.id == document_id))
+        await record_audit(
+            session,
+            org_id=org_id,
+            actor_user_id=membership.user.id,
+            action=DOCUMENT_DELETED,
+            target_type="document",
+            target_id=str(document_id),
+            payload={"title": title},
+        )
     await storage.delete(document_key(str(document_id)))

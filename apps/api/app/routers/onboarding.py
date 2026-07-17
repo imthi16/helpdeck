@@ -10,6 +10,7 @@ from app.core.db import app_session_factory
 from app.core.deps import MembershipContext, require_role
 from app.models import MembershipRole, Organization
 from app.schemas.auth import UserResponse
+from app.services.audit import SETTINGS_UPDATED, record_audit
 from app.services.auth import load_user_response
 
 router = APIRouter(prefix="/api/v1/onboarding", tags=["onboarding"])
@@ -38,6 +39,15 @@ async def complete_onboarding(
         if payload.org_name and payload.org_name.strip():
             org.name = payload.org_name.strip()
         org.onboarded = True
+        await record_audit(
+            session,
+            org_id=membership.org_id,
+            actor_user_id=membership.user.id,
+            action=SETTINGS_UPDATED,
+            target_type="organization",
+            target_id=str(membership.org_id),
+            payload={"onboarded": True, "renamed": bool(payload.org_name)},
+        )
         await session.commit()
         refreshed = await load_user_response(session, membership.user.id)
     assert refreshed is not None

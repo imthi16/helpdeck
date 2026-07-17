@@ -14,6 +14,7 @@ from app.core.security import (
     decode_token,
 )
 from app.schemas.auth import LoginRequest, SignupRequest, UserResponse
+from app.services.audit import AUTH_LOGIN, AUTH_SIGNUP, record_audit
 from app.services.auth import (
     AuthError,
     EmailAlreadyExists,
@@ -91,6 +92,7 @@ async def get_current_user(
 @router.post("/signup", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def signup_endpoint(
     payload: SignupRequest,
+    request: Request,
     response: Response,
     sessionmaker: Annotated[async_sessionmaker[AsyncSession], Depends(get_auth_sessionmaker)],
 ) -> UserResponse:
@@ -120,6 +122,19 @@ async def signup_endpoint(
         except AuthError as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT) from exc
         user_response = await load_user_response(session, user.id)
+        if user_response is not None and user_response.memberships:
+            await record_audit(
+                session,
+                org_id=user_response.memberships[0].org_id,
+                actor_user_id=user.id,
+                action=AUTH_SIGNUP,
+                target_type="user",
+                target_id=str(user.id),
+                payload={"via": "invite" if payload.invite_token else "org"},
+                ip=request.client.host if request.client else None,
+            )
+        # One commit for user/org/membership/key AND the audit row — atomic.
+        await session.commit()
 
     assert user_response is not None
     _set_auth_cookies(response, create_access_token(user.id), create_refresh_token(user.id))
@@ -129,6 +144,7 @@ async def signup_endpoint(
 @router.post("/login", response_model=UserResponse)
 async def login_endpoint(
     payload: LoginRequest,
+    request: Request,
     response: Response,
     sessionmaker: Annotated[async_sessionmaker[AsyncSession], Depends(get_auth_sessionmaker)],
 ) -> UserResponse:
@@ -140,6 +156,17 @@ async def login_endpoint(
                 status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid credentials"
             ) from exc
         user_response = await load_user_response(session, user.id)
+        if user_response is not None and user_response.memberships:
+            await record_audit(
+                session,
+                org_id=user_response.memberships[0].org_id,
+                actor_user_id=user.id,
+                action=AUTH_LOGIN,
+                target_type="user",
+                target_id=str(user.id),
+                ip=request.client.host if request.client else None,
+            )
+            await session.commit()
 
     assert user_response is not None
     _set_auth_cookies(response, create_access_token(user.id), create_refresh_token(user.id))
