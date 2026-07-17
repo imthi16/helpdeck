@@ -13,7 +13,7 @@ embeddable on any site with a single `<script>` tag.
 
 [![CI](https://github.com/imthi16/helpdeck/actions/workflows/ci.yml/badge.svg)](https://github.com/imthi16/helpdeck/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](LICENSE)
-![Status](https://img.shields.io/badge/status-MVP%20working%20locally-0d9488)
+![Status](https://img.shields.io/badge/status-MVP%20%2B%20hardening%20complete%20%C2%B7%20deploy%20prepped-0d9488)
 ![Runs offline](https://img.shields.io/badge/API%20keys-optional-4f46e5)
 
 ![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
@@ -82,6 +82,10 @@ from numbered context, cite `[n]`, otherwise say you don't know and escalate.
 ---
 
 ## Architecture
+
+![The chat turn: router → hybrid retrieval → grounded answer → faithfulness judge → respond or escalate](docs/assets/architecture.png)
+
+Full deep-dive in [docs/architecture.md](docs/architecture.md) and the [ADRs](docs/adr/).
 
 ```mermaid
 flowchart LR
@@ -196,9 +200,10 @@ docs/          IMPLEMENTATION_PLAN.md and notes
 
 ## Tested & CI
 
-Green on every push — **94 backend tests** (`pytest`) plus **19 browser E2E tests**
+Green on every push — **142 backend tests** (`pytest`) plus **19 browser E2E tests**
 (Playwright) across the dashboard and the widget, including the full *signup → upload →
-grounded cited answer* and *widget → out‑of‑KB → escalation* journeys.
+grounded cited answer* and *widget → out‑of‑KB → escalation* journeys, an RBAC
+role × endpoint matrix, and RLS isolation proofs.
 
 ```bash
 cd apps/api  && uv run pytest -q                       # backend
@@ -206,9 +211,32 @@ cd apps/web  && pnpm exec playwright test              # dashboard E2E
 cd apps/widget && pnpm exec playwright test            # widget E2E
 ```
 
-A quick offline retrieval sanity check: **9 / 10** hand‑written questions surface the
-expected chunk in the top‑3 using only the built‑in offline embedder (real embeddings do
-better).
+### Eval results (real, reproducible)
+
+From the committed [`eval/reports/latest.json`](eval/reports/latest.json): the 30‑item
+fast subset of the [125‑item golden dataset](eval/golden.jsonl) run end‑to‑end through
+the real pipeline on the **fully local free stack** (Ollama `llama3.2:3b` +
+`nomic-embed-text` — the floor, not the ceiling):
+
+| Metric | Score | Gate |
+|---|---|---|
+| Context recall | **1.00** | ≥ 0.70 ✅ |
+| Refusal accuracy (unanswerable ⇒ escalate) | **1.00** | ≥ 0.90 ✅ |
+| Citation validity | **1.00** | ≥ 0.85 ✅ |
+| Context precision | 0.43 | — |
+| Answered rate | 0.62 | — |
+
+The conservative answered rate is the guardrails working as designed: with a 3B local
+model the judge escalates anything it can't verify rather than letting it through.
+The same **deterministic** gate (recall, refusal, citation validity — and zero
+errored items) runs in CI on every PR that touches the agent or retrieval
+(`.github/workflows/eval.yml`). RAGAS‑judged faithfulness runs on the **nightly**
+full set, warn‑only until a baseline accumulates — judged metrics never block PRs.
+Reproduce with:
+
+```bash
+uv run --project apps/api --group eval python eval/run_eval.py --subset fast --gate
+```
 
 ---
 
@@ -221,9 +249,14 @@ HelpDeck is built phase‑by‑phase from an [implementation plan](docs/IMPLEMEN
 - ✅ **Phase 2** — LangGraph agent, guardrails & SSE streaming
 - ✅ **Phase 3** — Dashboard MVP (auth, KB, playground, conversations, onboarding)
 - ✅ **Phase 4** — Embeddable widget · **← sellable MVP**
-- 🔜 **Phase 5** — Row‑Level Security, RBAC, API keys, audit log, analytics
-- 🔜 **Phase 6** — Langfuse tracing & RAGAS evaluation gated in CI
-- 🔜 **Phase 7** — Production deploy & public demo
+- ✅ **Phase 5** — Row‑Level Security, RBAC, API keys, audit log, analytics
+- ✅ **Phase 6** — Langfuse tracing · deterministic eval gate in CI · nightly RAGAS (warn-only)
+- ✅ **Phase 7** — Deploy prep, demo mode, landing page (live URLs pending platform setup)
+
+What's next lives in [ROADMAP.md](ROADMAP.md) and the
+[labeled issues](https://github.com/imthi16/helpdeck/issues) — WhatsApp channel,
+agentic actions, and more. Architecture deep‑dive: [docs/architecture.md](docs/architecture.md)
++ three [ADRs](docs/adr/).
 
 ## License
 

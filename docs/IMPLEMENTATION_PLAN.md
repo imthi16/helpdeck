@@ -178,7 +178,7 @@
       *Verify:* incognito visitor can chat with the demo instantly.
 - [x] **7.4 Landing page.** Hero (pitch + live widget), 4–6 feature cards (grounded answers, citations, guardrails, escalation, analytics, self-hostable), architecture section, honest "Status" note, GitHub link.
       *Verify:* Lighthouse ≥ 90 performance/accessibility; mobile clean.
-- [ ] **7.5 Flagship README.** Order: one-line pitch → live demo link + 30s GIF → problem → architecture diagram (mermaid, committed as image too) → features → stack badges → quickstart (`docker compose up` path, < 10 min) → **eval results table (real RAGAS scores)** → roadmap link → honest status badge ("MVP live — WhatsApp channel in progress") → license.
+- [x] **7.5 Flagship README.** *(live demo link + GIF pending the live deploy)* Order: one-line pitch → live demo link + 30s GIF → problem → architecture diagram (mermaid, committed as image too) → features → stack badges → quickstart (`docker compose up` path, < 10 min) → **eval results table (real RAGAS scores)** → roadmap link → honest status badge ("MVP live — WhatsApp channel in progress") → license.
       *Verify:* a fresh clone by-the-README reaches a working playground in < 10 min.
 - [x] **7.6 Project hygiene.** `ROADMAP.md` (shipped / in-progress / planned); 10–15 labeled GitHub issues (`enhancement`, `good-first-issue`, `channel:whatsapp`, ...); `docs/architecture.md`; 2–3 ADRs (pgvector-over-dedicated-DB, SSE-over-WebSockets, RLS multi-tenancy).
       *Verify:* issues + roadmap render coherently on GitHub.
