@@ -155,7 +155,7 @@
       *Verify:* schema-checked by a loader test; reviewed by hand.
 - [x] **6.3 RAGAS runner.** `eval/run_eval.py`: runs the full pipeline per item; computes faithfulness, answer_relevancy, context_precision, context_recall; refusal-accuracy on the unanswerable subset; writes JSON report + row into `eval_runs` table; prints a summary table.
       *Verify:* full run completes on the golden set; report saved.
-- [ ] **6.4 CI eval gate.** CI job (on PRs touching `app/agent`, `app/services/retrieval*`, prompts, or `eval/`): run eval on a 30-item fast subset; FAIL if faithfulness < 0.85 or context_recall < 0.70 or refusal-accuracy < 0.90. Full set runs nightly via scheduled workflow.
+- [x] **6.4 CI eval gate.** CI job (on PRs touching `app/agent`, `app/services/retrieval*`, prompts, or `eval/`): run eval on a 30-item fast subset; FAIL if faithfulness < 0.85 or context_recall < 0.70 or refusal-accuracy < 0.90. Full set runs nightly via scheduled workflow.
       *Verify:* a deliberately weakened prompt (test branch) fails the gate; revert passes.
 - [ ] **6.5 Online sampling.** Nightly arq job: sample 5–10% of the day's production conversations → judge-based faithfulness scoring → results to Langfuse scores + `eval_runs`; alert (log/webhook) if 7-day faithfulness drops > 5 points.
       *Verify:* job runs against seeded traffic; scores visible.
