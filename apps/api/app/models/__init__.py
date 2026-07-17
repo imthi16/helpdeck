@@ -1,3 +1,4 @@
+from app.models.api_key import ApiKey, ApiKeyType
 from app.models.base import Base
 from app.models.conversation import (
     Conversation,
@@ -27,6 +28,8 @@ __all__ = [
     "DocumentStatus",
     "Escalation",
     "EscalationStatus",
+    "ApiKey",
+    "ApiKeyType",
     "Invitation",
     "Membership",
     "MembershipRole",

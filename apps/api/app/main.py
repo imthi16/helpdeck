@@ -12,6 +12,7 @@ from app.routers import (
     conversations,
     documents,
     internal,
+    keys,
     members,
     onboarding,
     widget,
@@ -73,6 +74,7 @@ def create_app() -> FastAPI:
 
     application.include_router(auth.router)
     application.include_router(members.router)
+    application.include_router(keys.router)
     application.include_router(onboarding.router)
     application.include_router(documents.router)
     application.include_router(conversations.router)

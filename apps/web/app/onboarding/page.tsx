@@ -15,6 +15,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { listApiKeys } from "@/lib/apiKeys";
 import { streamChat, type Citation } from "@/lib/chat";
 import { addText } from "@/lib/documents";
 import { completeOnboarding, useSession } from "@/lib/session";
@@ -37,6 +38,24 @@ export default function OnboardingPage() {
   const [answer, setAnswer] = useState("");
   const [citations, setCitations] = useState<Citation[]>([]);
   const [busy, setBusy] = useState(false);
+  const [widgetKey, setWidgetKey] = useState<string | null>(null);
+
+  // The real widget key (5.3): the owner can read it from the keys API.
+  useEffect(() => {
+    if (!user) return;
+    let active = true;
+    listApiKeys()
+      .then((rows) => {
+        const key = rows.find((k) => k.key_type === "widget" && !k.revoked_at);
+        if (active && key?.public_value) setWidgetKey(key.public_value);
+      })
+      .catch(() => {
+        // Placeholder stays if the key can't be read.
+      });
+    return () => {
+      active = false;
+    };
+  }, [user]);
   const nameInitialized = useRef(false);
 
   // Prefill the org name once the session loads.
@@ -89,8 +108,9 @@ export default function OnboardingPage() {
     }
   }
 
-  const publicKey = orgId ? `pk_${orgId.replace(/-/g, "").slice(0, 24)}` : "pk_your_key";
-  const snippet = `<script src="https://cdn.helpdeck.example/helpdeck.js" data-public-key="${publicKey}" defer></script>`;
+  const snippet = widgetKey
+    ? `<script src="https://cdn.helpdeck.example/helpdeck.js" data-public-key="${widgetKey}" defer></script>`
+    : null;
 
   return (
     <main className="flex min-h-screen items-center justify-center p-6">
@@ -161,12 +181,19 @@ export default function OnboardingPage() {
               <p className="text-sm text-muted-foreground">
                 Drop this snippet into any website to embed your assistant.
               </p>
-              <pre
-                className="overflow-x-auto rounded bg-muted p-3 text-xs"
-                data-testid="embed-snippet"
-              >
-                {snippet}
-              </pre>
+              {snippet ? (
+                <pre
+                  className="overflow-x-auto rounded bg-muted p-3 text-xs"
+                  data-testid="embed-snippet"
+                >
+                  {snippet}
+                </pre>
+              ) : (
+                <p className="rounded bg-muted p-3 text-xs" data-testid="embed-snippet-pending">
+                  Loading your widget key… If this doesn&apos;t resolve, find the snippet later
+                  under Settings → API keys.
+                </p>
+              )}
               <Button onClick={finish} disabled={busy} data-testid="finish-onboarding">
                 {busy ? "Finishing…" : "Go to dashboard"}
               </Button>
