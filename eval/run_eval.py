@@ -126,28 +126,37 @@ async def run_pipeline(items: list[dict]) -> list[ItemResult]:
                 ground_truth=item["ground_truth"],
             )
             started = time.perf_counter()
-            try:
-                async with async_session_factory() as session:
-                    conversation = Conversation(
-                        org_id=summary.org_id, channel=ConversationChannel.playground
+            # One retry per item: local providers (Ollama) occasionally crash
+            # their model runner mid-run; a transient blip should not poison
+            # the report (and with --gate, any surviving error fails the run).
+            for attempt in (1, 2):
+                result.error = None
+                try:
+                    async with async_session_factory() as session:
+                        conversation = Conversation(
+                            org_id=summary.org_id, channel=ConversationChannel.playground
+                        )
+                        session.add(conversation)
+                        await session.commit()
+                        conversation_id = conversation.id
+                    state = await run_turn(
+                        deps,
+                        org_id=summary.org_id,
+                        conversation_id=conversation_id,
+                        question=item["question"],
                     )
-                    session.add(conversation)
-                    await session.commit()
-                    conversation_id = conversation.id
-                state = await run_turn(
-                    deps,
-                    org_id=summary.org_id,
-                    conversation_id=conversation_id,
-                    question=item["question"],
-                )
-                chunks = state.get("chunks") or []
-                result.answer = state.get("response", "")
-                result.escalated = bool(state.get("escalated", False))
-                result.retrieved_docs = [c["document_title"] for c in chunks]
-                result.contexts = [c["content"] for c in chunks]
-                result.citations = len(state.get("citations") or [])
-            except Exception as exc:  # noqa: BLE001 - record and continue
-                result.error = str(exc)
+                    chunks = state.get("chunks") or []
+                    result.answer = state.get("response", "")
+                    result.escalated = bool(state.get("escalated", False))
+                    result.retrieved_docs = [c["document_title"] for c in chunks]
+                    result.contexts = [c["content"] for c in chunks]
+                    result.citations = len(state.get("citations") or [])
+                    break
+                except Exception as exc:  # noqa: BLE001 - record and continue
+                    result.error = str(exc)
+                    if attempt == 1:
+                        print(f"  [{index}/{len(items)}] {item['id']} retrying: {exc}", flush=True)
+                        await asyncio.sleep(5)
             results.append(result)
             elapsed = time.perf_counter() - started
             marker = "ESC" if result.escalated else f"{result.citations}c"
@@ -362,10 +371,15 @@ async def main() -> int:
         # A metric that is None is not applicable to this slice (e.g. no
         # unanswerable items when --limit trims the subset) — skip it rather
         # than failing the gate on missing data.
-        passed = all(
+        thresholds_ok = all(
             metrics.get(key) is None or metrics[key] >= minimum
             for key, minimum in thresholds.items()
         )
+        # Errored items are excluded from every denominator, so a crashing
+        # pipeline could otherwise pass on the surviving subset (including
+        # the case where every unanswerable item errors and refusal accuracy
+        # silently vanishes) — any surviving error fails the gate outright.
+        passed = thresholds_ok and metrics.get("errors", 0) == 0
 
     duration = time.perf_counter() - started
     report = {
