@@ -228,9 +228,11 @@ the real pipeline on the **fully local free stack** (Ollama `llama3.2:3b` +
 
 The conservative answered rate is the guardrails working as designed: with a 3B local
 model the judge escalates anything it can't verify rather than letting it through.
-The same gate runs in CI on every PR that touches the agent or retrieval
-(`.github/workflows/eval.yml`); nightly runs add RAGAS‑judged faithfulness. Reproduce
-with:
+The same **deterministic** gate (recall, refusal, citation validity — and zero
+errored items) runs in CI on every PR that touches the agent or retrieval
+(`.github/workflows/eval.yml`). RAGAS‑judged faithfulness runs on the **nightly**
+full set, warn‑only until a baseline accumulates — judged metrics never block PRs.
+Reproduce with:
 
 ```bash
 uv run --project apps/api --group eval python eval/run_eval.py --subset fast --gate
@@ -248,7 +250,7 @@ HelpDeck is built phase‑by‑phase from an [implementation plan](docs/IMPLEMEN
 - ✅ **Phase 3** — Dashboard MVP (auth, KB, playground, conversations, onboarding)
 - ✅ **Phase 4** — Embeddable widget · **← sellable MVP**
 - ✅ **Phase 5** — Row‑Level Security, RBAC, API keys, audit log, analytics
-- ✅ **Phase 6** — Langfuse tracing & RAGAS evaluation gated in CI
+- ✅ **Phase 6** — Langfuse tracing · deterministic eval gate in CI · nightly RAGAS (warn-only)
 - ✅ **Phase 7** — Deploy prep, demo mode, landing page (live URLs pending platform setup)
 
 What's next lives in [ROADMAP.md](ROADMAP.md) and the
