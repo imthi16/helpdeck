@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import get_settings
-from app.core.db import async_session_factory
+from app.core.db import app_session_factory
 from app.core.security import (
     TokenError,
     create_access_token,
@@ -29,7 +29,9 @@ REFRESH_COOKIE = "helpdeck_refresh"
 
 
 def get_auth_sessionmaker() -> async_sessionmaker[AsyncSession]:
-    return async_session_factory
+    # Identity lane: plain app-role sessions, no tenant setting. Login/signup
+    # run before an org is known, so these queries cannot be tenant-scoped.
+    return app_session_factory
 
 
 def _set_auth_cookies(response: Response, access: str, refresh: str) -> None:

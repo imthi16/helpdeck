@@ -141,6 +141,24 @@ jobs:
       - name: Install API deps
         working-directory: apps/api
         run: uv sync
+      # The API now serves tenant data as helpdeck_app; provision its login
+      # here just like the api job (the RLS migration never handles credentials).
+      - name: Provision helpdeck_app login role
+        env:
+          PGPASSWORD: helpdeck
+        run: |
+          psql -h localhost -p 5433 -U helpdeck -d helpdeck -v ON_ERROR_STOP=1 -c "
+          DO \$\$
+          BEGIN
+            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'helpdeck_app') THEN
+              CREATE ROLE helpdeck_app LOGIN PASSWORD 'helpdeck_app'
+                NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
+            ELSE
+              ALTER ROLE helpdeck_app LOGIN PASSWORD 'helpdeck_app'
+                NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
+            END IF;
+          END
+          \$\$;"
       - uses: pnpm/action-setup@v4
         with:
           version: 11

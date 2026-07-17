@@ -24,7 +24,10 @@ from app.models import (
     Document,
     DocumentSourceType,
     DocumentStatus,
+    Membership,
+    MembershipRole,
     Organization,
+    User,
 )
 
 Sessionmaker = async_sessionmaker[AsyncSession]
@@ -154,6 +157,79 @@ async def test_with_check_blocks_cross_tenant_write(
                 ),
                 {"org": str(org_b)},
             )
+
+
+async def test_identity_lane_works_as_app_role(
+    app_db: AppDb, db_sessionmaker: Sessionmaker
+) -> None:
+    """The app role can serve signup/login (identity tables have grants, no RLS)."""
+    from app.services.auth import load_user_response, signup
+
+    email = f"rls-identity-{uuid.uuid4().hex[:10]}@example.com"
+    async with app_db.session() as session:
+        user = await signup(
+            session, email=email, password="hunter2pw", name="I", org_name="IdentityOrg"
+        )
+        loaded = await load_user_response(session, user.id)
+    assert loaded is not None
+    assert loaded.memberships and loaded.memberships[0].role.value == "owner"
+
+    # Cleanup as superuser.
+    async with db_sessionmaker() as session:
+        db_user = await session.get(User, user.id)
+        org = await session.get(Organization, loaded.memberships[0].org_id)
+        if db_user is not None:
+            await session.delete(db_user)
+        if org is not None:
+            await session.delete(org)
+        await session.commit()
+
+
+async def test_documents_endpoint_enforced_by_rls(
+    app_db: AppDb,
+    two_orgs: tuple[uuid.UUID, uuid.UUID],
+    db_sessionmaker: Sessionmaker,
+) -> None:
+    """End to end: the documents router, run over the app role, only sees the
+    authenticated user's org even though another org's rows exist."""
+    import httpx
+
+    from app.main import app
+    from app.routers.auth import get_auth_sessionmaker
+    from app.routers.documents import get_documents_sessionmaker
+
+    org_a, org_b = two_orgs
+    email = f"rls-router-{uuid.uuid4().hex[:10]}@example.com"
+    async with db_sessionmaker() as session:
+        user = User(email=email, password_hash="x", name="R")
+        session.add(user)
+        await session.flush()
+        session.add(Membership(org_id=org_a, user_id=user.id, role=MembershipRole.owner))
+        await session.commit()
+        user_id = user.id
+
+    app.dependency_overrides[get_auth_sessionmaker] = lambda: db_sessionmaker
+    app.dependency_overrides[get_documents_sessionmaker] = lambda: app_db.factory
+    try:
+        from app.core.security import create_access_token
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            headers={"Authorization": f"Bearer {create_access_token(user_id)}"},
+        ) as client:
+            resp = await client.get("/api/v1/documents")
+        assert resp.status_code == 200
+        titles = [d["title"] for d in resp.json()]
+        assert titles == ["Org A doc"]
+    finally:
+        app.dependency_overrides.clear()
+        async with db_sessionmaker() as session:
+            db_user = await session.get(User, user_id)
+            if db_user is not None:
+                await session.delete(db_user)
+            await session.commit()
 
 
 async def test_child_cannot_reference_cross_tenant_parent(

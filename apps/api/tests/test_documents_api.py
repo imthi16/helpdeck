@@ -24,7 +24,7 @@ class RecordingQueue:
     def __init__(self) -> None:
         self.enqueued: list[uuid.UUID] = []
 
-    async def enqueue_ingest(self, document_id: uuid.UUID) -> None:
+    async def enqueue_ingest(self, document_id: uuid.UUID, org_id: uuid.UUID) -> None:
         self.enqueued.append(document_id)
 
 

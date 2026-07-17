@@ -7,8 +7,8 @@
 
 ## Status
 
-- **Current phase:** 4 (complete) → 5 next
-- **Last updated:** 2026-07-10
+- **Current phase:** 5 (in progress — 5.1 done)
+- **Last updated:** 2026-07-14
 - **Blockers:** none
 
 ---
@@ -128,7 +128,7 @@
 
 **Goal:** real isolation, roles, keys, and numbers — the enterprise-signal features.
 
-- [ ] **5.1 Row-Level Security.** Migration: enable + `FORCE ROW LEVEL SECURITY` on all tenant tables; policies `USING (org_id = current_setting('app.current_tenant')::uuid)`; create non-superuser `helpdeck_app` DB role; app connects as it. Session/transaction middleware runs `SET LOCAL app.current_tenant = :org_id`.
+- [x] **5.1 Row-Level Security.** Migration: enable + `FORCE ROW LEVEL SECURITY` on all tenant tables; policies `USING (org_id = current_setting('app.current_tenant')::uuid)`; create non-superuser `helpdeck_app` DB role; app connects as it. Session/transaction middleware runs `SET LOCAL app.current_tenant = :org_id`.
       *Verify:* isolation tests — org A session querying org B rows gets zero results even with a deliberately unscoped query; app role cannot bypass.
 - [ ] **5.2 RBAC enforcement.** FastAPI dependency `require_role(...)`: owner (billing/delete org/keys), admin (KB, members, settings), agent (conversations/escalations), viewer (read-only). Members page in web: invite by email (token link), change role, remove.
       *Verify:* matrix test — each role against each sensitive endpoint returns expected 200/403.

@@ -13,8 +13,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy import Float, func, select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.db import SessionFactory
 from app.models import Chunk
 from app.services.embeddings import EmbeddingService
 
@@ -70,7 +70,7 @@ class _Candidate:
 class HybridRetriever:
     def __init__(
         self,
-        sessionmaker: async_sessionmaker[AsyncSession],
+        sessionmaker: SessionFactory,
         embedding_service: EmbeddingService,
         *,
         dense_k: int = DENSE_K,

@@ -15,7 +15,7 @@ from fastapi import (
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.core.db import async_session_factory
+from app.core.db import app_session_factory, tenant_session
 from app.models import Chunk, Document, DocumentSourceType, DocumentStatus
 from app.routers.auth import get_current_user
 from app.schemas.auth import UserResponse
@@ -29,7 +29,9 @@ MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 MB
 
 
 def get_documents_sessionmaker() -> async_sessionmaker[AsyncSession]:
-    return async_session_factory
+    # Base factory for the tenant lane; every endpoint below opens
+    # tenant_session(org_id, session_factory=<this>) so RLS is enforced.
+    return app_session_factory
 
 
 def get_documents_storage() -> ContentStorage:
@@ -83,7 +85,7 @@ async def _get_owned_document(
 
 @router.get("", response_model=list[DocumentResponse])
 async def list_documents(sessionmaker: SessionmakerDep, org_id: OrgDep) -> list[DocumentResponse]:
-    async with sessionmaker() as session:
+    async with tenant_session(org_id, session_factory=sessionmaker) as session:
         rows = (
             await session.execute(
                 select(Document, func.count(Chunk.id))
@@ -100,7 +102,7 @@ async def list_documents(sessionmaker: SessionmakerDep, org_id: OrgDep) -> list[
 async def get_document(
     document_id: uuid.UUID, sessionmaker: SessionmakerDep, org_id: OrgDep
 ) -> DocumentResponse:
-    async with sessionmaker() as session:
+    async with tenant_session(org_id, session_factory=sessionmaker) as session:
         document = await _get_owned_document(session, document_id, org_id)
         count = await session.scalar(
             select(func.count(Chunk.id)).where(Chunk.document_id == document_id)
@@ -127,7 +129,7 @@ async def upload_document(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="file too large"
         )
 
-    async with sessionmaker() as session:
+    async with tenant_session(org_id, session_factory=sessionmaker) as session:
         document = Document(
             org_id=org_id,
             title=filename.rsplit(".", 1)[0],
@@ -135,13 +137,13 @@ async def upload_document(
             status=DocumentStatus.pending,
         )
         session.add(document)
-        await session.commit()
+        await session.flush()  # populate the UUID default before leaving the block
         document_id = document.id
 
     await storage.put(document_key(str(document_id)), data)
-    await queue.enqueue_ingest(document_id)
+    await queue.enqueue_ingest(document_id, org_id)
 
-    async with sessionmaker() as session:
+    async with tenant_session(org_id, session_factory=sessionmaker) as session:
         document = await session.get(Document, document_id)
         return _to_response(document, 0)
 
@@ -158,7 +160,7 @@ async def create_document(
     if not title:
         title = "Untitled"
 
-    async with sessionmaker() as session:
+    async with tenant_session(org_id, session_factory=sessionmaker) as session:
         document = Document(
             org_id=org_id,
             title=title[:512],
@@ -167,14 +169,14 @@ async def create_document(
             status=DocumentStatus.pending,
         )
         session.add(document)
-        await session.commit()
+        await session.flush()  # populate the UUID default before leaving the block
         document_id = document.id
 
     if payload.source_type == DocumentSourceType.text and payload.content:
         await storage.put(document_key(str(document_id)), payload.content.encode("utf-8"))
-    await queue.enqueue_ingest(document_id)
+    await queue.enqueue_ingest(document_id, org_id)
 
-    async with sessionmaker() as session:
+    async with tenant_session(org_id, session_factory=sessionmaker) as session:
         document = await session.get(Document, document_id)
         return _to_response(document, 0)
 
@@ -186,13 +188,12 @@ async def reindex_document(
     queue: QueueDep,
     org_id: OrgDep,
 ) -> DocumentResponse:
-    async with sessionmaker() as session:
+    async with tenant_session(org_id, session_factory=sessionmaker) as session:
         document = await _get_owned_document(session, document_id, org_id)
         document.status = DocumentStatus.pending
         document.error = None
-        await session.commit()
-    await queue.enqueue_ingest(document_id)
-    async with sessionmaker() as session:
+    await queue.enqueue_ingest(document_id, org_id)
+    async with tenant_session(org_id, session_factory=sessionmaker) as session:
         document = await session.get(Document, document_id)
         count = await session.scalar(
             select(func.count(Chunk.id)).where(Chunk.document_id == document_id)
@@ -207,8 +208,7 @@ async def delete_document(
     storage: StorageDep,
     org_id: OrgDep,
 ) -> None:
-    async with sessionmaker() as session:
+    async with tenant_session(org_id, session_factory=sessionmaker) as session:
         await _get_owned_document(session, document_id, org_id)  # 404s if not owned
         await session.execute(delete(Document).where(Document.id == document_id))
-        await session.commit()
     await storage.delete(document_key(str(document_id)))

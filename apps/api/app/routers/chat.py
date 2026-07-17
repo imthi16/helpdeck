@@ -18,7 +18,7 @@ from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 
 from app.agent.graph import build_agent_graph
 from app.agent.runner import build_dependencies
-from app.core.db import async_session_factory
+from app.core.db import SessionFactory, app_session_factory, tenant_sessionmaker
 from app.core.logging import get_logger
 from app.models import Conversation, ConversationChannel, Message, MessageRole
 from app.schemas.chat import ChatRequest
@@ -33,7 +33,9 @@ HEARTBEAT_SECONDS = 15
 
 
 def get_chat_sessionmaker() -> async_sessionmaker[AsyncSession]:
-    return async_session_factory
+    # Base factory for the tenant lane; run_chat_stream binds it to the org via
+    # tenant_sessionmaker so every session below runs under RLS.
+    return app_session_factory
 
 
 def get_chat_checkpointer(request: Request) -> Any:
@@ -54,12 +56,12 @@ def _sse(event: str, payload: dict[str, Any]) -> ServerSentEvent:
 
 
 async def _ensure_conversation(
-    sessionmaker: async_sessionmaker[AsyncSession],
+    tenant_sm: SessionFactory,
     org_id: uuid.UUID,
     conversation_id: uuid.UUID | None,
     channel: ConversationChannel,
 ) -> uuid.UUID:
-    async with sessionmaker() as session:
+    async with tenant_sm() as session:
         if conversation_id is not None:
             conversation = await session.get(Conversation, conversation_id)
             if conversation is None or conversation.org_id != org_id:
@@ -69,12 +71,12 @@ async def _ensure_conversation(
             return conversation.id
         conversation = Conversation(org_id=org_id, channel=channel)
         session.add(conversation)
-        await session.commit()
+        await session.flush()  # populate the UUID default before leaving the block
         return conversation.id
 
 
 async def _persist_message(
-    sessionmaker: async_sessionmaker[AsyncSession],
+    tenant_sm: SessionFactory,
     *,
     org_id: uuid.UUID,
     conversation_id: uuid.UUID,
@@ -87,7 +89,7 @@ async def _persist_message(
     tokens_out: int | None = None,
     latency_ms: int | None = None,
 ) -> uuid.UUID:
-    async with sessionmaker() as session:
+    async with tenant_sm() as session:
         message = Message(
             org_id=org_id,
             conversation_id=conversation_id,
@@ -101,7 +103,7 @@ async def _persist_message(
             latency_ms=latency_ms,
         )
         session.add(message)
-        await session.commit()
+        await session.flush()  # populate the UUID default before leaving the block
         return message.id
 
 
@@ -142,25 +144,28 @@ async def run_chat_stream(
     user_identifier: str | None = None,
 ) -> EventSourceResponse:
     """Shared SSE chat turn used by the dashboard and widget endpoints."""
+    # Bind the tenant once; every session opened below runs under RLS. Sessions
+    # stay short (one per persistence step) — a single transaction across the
+    # whole SSE stream would pin a pooled connection for the LLM's lifetime.
+    tenant_sm = tenant_sessionmaker(org_id, session_factory=sessionmaker)
     resolved_conversation_id = await _ensure_conversation(
-        sessionmaker, org_id, conversation_id, channel
+        tenant_sm, org_id, conversation_id, channel
     )
     if user_identifier and conversation_id is None:
-        async with sessionmaker() as session:
+        async with tenant_sm() as session:
             conversation = await session.get(Conversation, resolved_conversation_id)
             if conversation is not None:
                 conversation.user_identifier = user_identifier
-                await session.commit()
 
     await _persist_message(
-        sessionmaker,
+        tenant_sm,
         org_id=org_id,
         conversation_id=resolved_conversation_id,
         role=MessageRole.user,
         content=message,
     )
 
-    kb_version = await compute_kb_version(sessionmaker, org_id)
+    kb_version = await compute_kb_version(tenant_sm, org_id)
     cached = None if bypass_cache else await cache.get(str(org_id), message, kb_version)
     headers = {
         "X-Accel-Buffering": "no",
@@ -169,7 +174,7 @@ async def run_chat_stream(
 
     if cached is not None:
         message_id = await _persist_message(
-            sessionmaker,
+            tenant_sm,
             org_id=org_id,
             conversation_id=resolved_conversation_id,
             role=MessageRole.assistant,
@@ -189,7 +194,7 @@ async def run_chat_stream(
         final: dict[str, Any] = {}
         streamed: list[str] = []
         try:
-            deps = build_dependencies(sessionmaker=sessionmaker, gateway=gateway)
+            deps = build_dependencies(sessionmaker=tenant_sm, gateway=gateway)
             graph = build_agent_graph(deps, checkpointer=checkpointer)
             initial = {
                 "org_id": str(org_id),
@@ -224,7 +229,7 @@ async def run_chat_stream(
 
             escalated = bool(final.get("escalated", False))
             message_id = await _persist_message(
-                sessionmaker,
+                tenant_sm,
                 org_id=org_id,
                 conversation_id=resolved_conversation_id,
                 role=MessageRole.assistant,
