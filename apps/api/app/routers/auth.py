@@ -42,7 +42,7 @@ def _set_auth_cookies(response: Response, access: str, refresh: str) -> None:
     common = {
         "httponly": True,
         "secure": settings.cookie_secure,
-        "samesite": "lax",
+        "samesite": settings.cookie_samesite,
         "domain": settings.cookie_domain,
     }
     response.set_cookie(

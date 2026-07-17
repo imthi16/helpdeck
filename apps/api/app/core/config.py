@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     refresh_token_ttl_days: int = 7
     cookie_secure: bool = False
     cookie_domain: str | None = None
+    # "lax" for same-site deployments; "none" (with COOKIE_SECURE=true) when
+    # the dashboard and API live on different sites (e.g. Vercel + Render).
+    cookie_samesite: str = "lax"
 
     # LLM/embeddings default to a free, local, open-source stack served by Ollama
     # (reached through the litellm gateway). Set ANTHROPIC/OPENAI keys and matching
