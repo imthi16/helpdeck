@@ -134,6 +134,10 @@ async def analytics_quality(
             .scalars()
             .all()
         )
+    # Deployments may only have online-sampling rows (offline runs happen in
+    # CI's ephemeral DB) — fall back so the Quality card still renders.
+    if latest is None and trend_rows:
+        latest = trend_rows[0]
     return QualityResponse(
         latest=to_response(latest) if latest else None,
         trend=[to_response(run) for run in reversed(trend_rows)],
