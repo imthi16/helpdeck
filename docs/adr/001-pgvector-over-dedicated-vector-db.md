@@ -17,9 +17,11 @@ Rank Fusion in the application.
 ## Rationale
 
 - **One database, one transaction boundary.** Chunks, their embeddings, and
-  tenant metadata live in the same row — ingest is a single upsert, deletes
-  cascade, and there is no dual-write consistency problem between a vector
-  store and the system of record.
+  tenant metadata live in the same row; deletes cascade, and there is no
+  dual-write consistency problem between a vector store and the system of
+  record. (Re-ingestion is a delete-and-reinsert, not an upsert: every
+  re-index mints new chunk ids, which is why historical message citations
+  can dangle — the online evaluator treats those as skips by design.)
 - **RLS applies to vectors too.** Tenant isolation (ADR-003) is enforced by
   the same FORCE RLS policies on `chunks`; a separate vector DB would need
   its own bespoke isolation story.
