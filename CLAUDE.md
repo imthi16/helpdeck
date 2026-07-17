@@ -65,7 +65,7 @@ pnpm build                                            # -> dist/helpdeck.js
 
 # E2E + eval (repo root)
 pnpm exec playwright test
-uv run python eval/run_eval.py                        # RAGAS report + threshold check
+uv run --project apps/api --group eval python eval/run_eval.py --subset fast --gate
 ```
 
 ## Environment variables

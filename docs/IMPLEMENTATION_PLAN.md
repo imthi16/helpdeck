@@ -153,7 +153,7 @@
       *Verify:* one playground conversation shows a complete, costed trace tree in Langfuse.
 - [x] **6.2 Golden dataset.** `eval/golden.jsonl`: 100–200 items over the seed corpus — `{question, ground_truth, expected_doc_ids}`; include ~15% deliberately unanswerable questions (expected: refusal).
       *Verify:* schema-checked by a loader test; reviewed by hand.
-- [ ] **6.3 RAGAS runner.** `eval/run_eval.py`: runs the full pipeline per item; computes faithfulness, answer_relevancy, context_precision, context_recall; refusal-accuracy on the unanswerable subset; writes JSON report + row into `eval_runs` table; prints a summary table.
+- [x] **6.3 RAGAS runner.** `eval/run_eval.py`: runs the full pipeline per item; computes faithfulness, answer_relevancy, context_precision, context_recall; refusal-accuracy on the unanswerable subset; writes JSON report + row into `eval_runs` table; prints a summary table.
       *Verify:* full run completes on the golden set; report saved.
 - [ ] **6.4 CI eval gate.** CI job (on PRs touching `app/agent`, `app/services/retrieval*`, prompts, or `eval/`): run eval on a 30-item fast subset; FAIL if faithfulness < 0.85 or context_recall < 0.70 or refusal-accuracy < 0.90. Full set runs nightly via scheduled workflow.
       *Verify:* a deliberately weakened prompt (test branch) fails the gate; revert passes.
