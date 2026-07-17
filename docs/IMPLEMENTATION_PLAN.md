@@ -151,7 +151,7 @@
 
 - [x] **6.1 Langfuse everywhere.** Trace per conversation turn: spans for router, retrieval (with chunk IDs + scores), answer, judge; cost + tokens per span; `org_id`/`conversation_id` as metadata; user feedback (thumbs, CSAT) attached as Langfuse scores. Use Langfuse Cloud free tier for dev (self-host option documented in `docs/` for the on-prem story).
       *Verify:* one playground conversation shows a complete, costed trace tree in Langfuse.
-- [ ] **6.2 Golden dataset.** `eval/golden.jsonl`: 100–200 items over the seed corpus — `{question, ground_truth, expected_doc_ids}`; include ~15% deliberately unanswerable questions (expected: refusal).
+- [x] **6.2 Golden dataset.** `eval/golden.jsonl`: 100–200 items over the seed corpus — `{question, ground_truth, expected_doc_ids}`; include ~15% deliberately unanswerable questions (expected: refusal).
       *Verify:* schema-checked by a loader test; reviewed by hand.
 - [ ] **6.3 RAGAS runner.** `eval/run_eval.py`: runs the full pipeline per item; computes faithfulness, answer_relevancy, context_precision, context_recall; refusal-accuracy on the unanswerable subset; writes JSON report + row into `eval_runs` table; prints a summary table.
       *Verify:* full run completes on the golden set; report saved.
