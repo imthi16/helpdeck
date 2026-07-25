@@ -3,12 +3,10 @@
 import uuid
 from typing import Any
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
 from app.agent.graph import build_agent_graph
 from app.agent.state import AgentDependencies, AgentState
 from app.core.config import get_settings
-from app.core.db import async_session_factory
+from app.core.db import SessionFactory, unscoped_session_factory
 from app.services.embeddings import EmbeddingService
 from app.services.llm import LLMGateway
 from app.services.reranker import Reranker, get_reranker
@@ -16,7 +14,7 @@ from app.services.reranker import Reranker, get_reranker
 
 def build_dependencies(
     *,
-    sessionmaker: async_sessionmaker[AsyncSession] | None = None,
+    session_factory: SessionFactory | None = None,
     gateway: LLMGateway | None = None,
     embedding_service: EmbeddingService | None = None,
     reranker: Reranker | None = None,
@@ -24,7 +22,9 @@ def build_dependencies(
     settings = get_settings()
     return AgentDependencies(
         gateway=gateway or LLMGateway(),
-        sessionmaker=sessionmaker or async_session_factory,
+        # The request path always passes a tenant-scoped factory; the fallback is
+        # a privileged unit of work for offline callers (eval, scripts).
+        session_factory=session_factory or unscoped_session_factory(),
         embedding_service=embedding_service or EmbeddingService(),
         reranker=reranker or get_reranker(),
         faithfulness_threshold=settings.faithfulness_threshold,

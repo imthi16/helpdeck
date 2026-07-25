@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sse_starlette.sse import EventSourceResponse
 
-from app.core.db import async_session_factory
+from app.core.db import TenantSessionFactory, async_session_factory
 from app.models import ConversationChannel, Message, MessageRole, Organization
 from app.routers.chat import (
     get_chat_cache,
@@ -19,6 +19,7 @@ from app.routers.chat import (
     get_chat_gateway,
     run_chat_stream,
 )
+from app.routers.deps import AppSessionFactoryDep
 from app.schemas.widget import WidgetChatRequest, WidgetConfig, WidgetFeedbackRequest
 from app.services.cache import ResponseCache
 from app.services.llm import LLMGateway
@@ -30,6 +31,8 @@ WIDGET_RATE_LIMIT_PER_MINUTE = 30
 
 
 def get_widget_sessionmaker() -> async_sessionmaker[AsyncSession]:
+    """Identity session: the public-key -> org lookup reads ``organizations``,
+    which has no RLS and is not granted to the app role."""
     return async_session_factory
 
 
@@ -105,6 +108,7 @@ async def widget_config(
 async def widget_chat(
     payload: WidgetChatRequest,
     sessionmaker: SessionmakerDep,
+    app_session_factory: AppSessionFactoryDep,
     limiter: LimiterDep,
     request: Request,
     gateway: Annotated[LLMGateway, Depends(get_chat_gateway)],
@@ -118,7 +122,7 @@ async def widget_chat(
 
     checkpointer = get_chat_checkpointer(request)
     return await run_chat_stream(
-        sessionmaker=sessionmaker,
+        db=TenantSessionFactory(org.id, session_factory=app_session_factory),
         gateway=gateway,
         checkpointer=checkpointer,
         cache=cache,
@@ -134,6 +138,7 @@ async def widget_chat(
 async def widget_feedback(
     payload: WidgetFeedbackRequest,
     sessionmaker: SessionmakerDep,
+    app_session_factory: AppSessionFactoryDep,
     limiter: LimiterDep,
     request: Request,
     response: Response,
@@ -144,9 +149,9 @@ async def widget_feedback(
     _check_origin(org, origin)
     await _enforce_rate_limit(limiter, org, request)
 
-    async with sessionmaker() as session:
+    db = TenantSessionFactory(org.id, session_factory=app_session_factory)
+    async with db() as session:
         message = await session.get(Message, payload.message_id)
         if message is None or message.org_id != org.id or message.role != MessageRole.assistant:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="message not found")
         message.feedback = payload.rating
-        await session.commit()

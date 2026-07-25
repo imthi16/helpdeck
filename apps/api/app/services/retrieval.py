@@ -13,8 +13,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy import Float, func, select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.db import SessionFactory
 from app.models import Chunk
 from app.services.embeddings import EmbeddingService
 
@@ -70,14 +70,14 @@ class _Candidate:
 class HybridRetriever:
     def __init__(
         self,
-        sessionmaker: async_sessionmaker[AsyncSession],
+        session_factory: SessionFactory,
         embedding_service: EmbeddingService,
         *,
         dense_k: int = DENSE_K,
         text_k: int = TEXT_K,
         rrf_k: int = RRF_K,
     ) -> None:
-        self._sessionmaker = sessionmaker
+        self._session_factory = session_factory
         self._embedding_service = embedding_service
         self._dense_k = dense_k
         self._text_k = text_k
@@ -91,7 +91,7 @@ class HybridRetriever:
             .order_by(distance)
             .limit(self._dense_k)
         )
-        async with self._sessionmaker() as session:
+        async with self._session_factory() as session:
             rows = (await session.execute(stmt)).all()
         return [_Candidate(r.id, r.document_id, r.content, r.meta) for r in rows]
 
@@ -104,7 +104,7 @@ class HybridRetriever:
             .order_by(rank.desc())
             .limit(self._text_k)
         )
-        async with self._sessionmaker() as session:
+        async with self._session_factory() as session:
             rows = (await session.execute(stmt)).all()
         return [_Candidate(r.id, r.document_id, r.content, r.meta, r.rank) for r in rows]
 

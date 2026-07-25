@@ -94,7 +94,7 @@ def build_agent_graph(deps: AgentDependencies, checkpointer: Any = None):
 
     async def retrieve(state: AgentState) -> AgentState:
         _emit("status", value="retrieving")
-        retriever = HybridRetriever(deps.sessionmaker, deps.embedding_service)
+        retriever = HybridRetriever(deps.session_factory, deps.embedding_service)
         fused = await retriever.search(
             uuid.UUID(state["org_id"]), state["question"], top_n=max(50, deps.retrieval_top_n)
         )
@@ -215,7 +215,7 @@ async def _record_escalation(
     reason: str,
     conversation_id: uuid.UUID,
 ) -> None:
-    async with deps.sessionmaker() as session:
+    async with deps.session_factory() as session:
         conversation = await session.get(Conversation, conversation_id)
         if conversation is None:
             logger.warning("escalation_no_conversation", conversation_id=str(conversation_id))
@@ -228,4 +228,3 @@ async def _record_escalation(
                 reason=reason,
             )
         )
-        await session.commit()

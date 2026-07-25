@@ -64,16 +64,47 @@ RLS is applied to the tenant **data** tables only. `users`, `memberships`, and
 user in?"); forcing RLS there would break login. Those tables keep their existing
 explicit `org_id` scoping in application code.
 
-### Remaining work (follow-up PR)
+### Runtime cutover (second PR — completes 5.1)
 
-The **runtime cutover** — making the FastAPI process actually connect as `helpdeck_app`
-and routing every org-scoped endpoint (documents, conversations, dashboard chat, widget
-chat, internal search, retrieval reads) through `tenant_session` so `app.current_tenant`
-is set per request — is intentionally a separate PR. It touches the streaming chat path
-(SSE + Postgres checkpointer + cache), where a missed `SET LOCAL` would fail closed and
-break flows in subtle ways, so it is best reviewed and E2E-verified on its own. Until
-then the DB-level FORCE RLS is in place as defense-in-depth, and the app continues to
-rely on the explicit `org_id` filters already present in every tenant query.
+The request path now actually connects as `helpdeck_app`, so RLS is the enforcing layer
+and the explicit `org_id` filters are defense-in-depth rather than the only defense.
 
-Because of this, **Phase 5.1 is not yet checked off** in `IMPLEMENTATION_PLAN.md` — the
-foundation and the isolation proof have landed; the app-role cutover is pending.
+- **Two session kinds, made explicit** (`app/routers/deps.py`):
+  - *identity* — the privileged `async_session_factory`. `users`, `memberships` and
+    `organizations` have no RLS and the app role has no grants on them, so auth,
+    onboarding, and the widget's public-key → org lookup keep using it.
+  - *tenant* — `tenant_db`, an app-role session with `app.current_tenant` set. Every
+    handler touching `documents`/`chunks`/`conversations`/`messages`/`escalations` uses
+    it: documents CRUD, conversations inbox, dashboard chat, widget chat + feedback,
+    internal search, and all retrieval reads.
+- **`SessionFactory` protocol + `TenantSessionFactory`** (`app/core/db.py`). The tenant
+  factory is call-compatible with `async_sessionmaker`, so handlers keep the
+  `async with db() as session:` shape; `HybridRetriever`, `compute_kb_version` and
+  `AgentDependencies` depend on the protocol instead of a concrete sessionmaker.
+- **Sessions are units of work.** `tenant_session` owns its transaction, so handlers no
+  longer call `session.commit()` — they `flush()` when they need a generated id and let
+  the block commit. Committing inside would drop `app.current_tenant` and make later
+  queries in the same block fail closed. `unscoped_session_factory()` gives privileged
+  callers (agent default, scripts, eval) the same commit-on-exit semantics with no
+  tenant scope.
+- **Streaming stays short-transactional.** The SSE path does *not* hold a transaction
+  open across the stream: each persistence step (`_ensure_conversation`,
+  `_persist_message`, the escalation write) is its own tenant-scoped transaction, as
+  before the cutover.
+- **`get_app_session_factory` is the single DI seam.** The API test suite overrides it
+  with a loop-local `helpdeck_app` engine (`app_sessionmaker` in `conftest.py`), so
+  documents/conversations/chat/widget/search tests all run under RLS with the
+  least-privilege grants — a missing grant or an unset tenant scope fails in CI instead
+  of at runtime. `tests/test_rls_runtime.py` is the wiring proof: a probe route shows
+  `is_superuser = off`, the caller's `app.current_tenant`, and an unscoped
+  `SELECT title FROM documents` returning only that tenant's rows.
+
+### Still on the privileged connection (deliberate)
+
+- **arq ingest worker.** The job payload is only `document_id`, so the worker has no org
+  context until it reads the document — cutting it over means changing the enqueue
+  contract to carry `org_id`. Tracked as follow-up work; the worker runs in-process,
+  not on user input.
+- **LangGraph Postgres checkpointer** — GitHub issue #64. Its tables are
+  library-managed and not granted to the app role.
+- Migrations, `scripts/seed*.py`, and test setup/teardown, as before.

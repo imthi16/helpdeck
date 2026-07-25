@@ -18,15 +18,15 @@ from app.models import (
     User,
 )
 from app.routers.auth import get_auth_sessionmaker
-from app.routers.conversations import get_conversations_sessionmaker
+from app.routers.deps import get_app_session_factory
 
 Sessionmaker = async_sessionmaker[AsyncSession]
 
 
 @pytest.fixture(autouse=True)
-def overrides(db_sessionmaker: Sessionmaker):
+def overrides(db_sessionmaker: Sessionmaker, app_sessionmaker: Sessionmaker):
     app.dependency_overrides[get_auth_sessionmaker] = lambda: db_sessionmaker
-    app.dependency_overrides[get_conversations_sessionmaker] = lambda: db_sessionmaker
+    app.dependency_overrides[get_app_session_factory] = lambda: app_sessionmaker
     yield
     app.dependency_overrides.clear()
 

@@ -13,14 +13,14 @@ from time import perf_counter
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 
 from app.agent.graph import build_agent_graph
 from app.agent.runner import build_dependencies
-from app.core.db import async_session_factory
+from app.core.db import SessionFactory, TenantSessionFactory
 from app.core.logging import get_logger
 from app.models import Conversation, ConversationChannel, Message, MessageRole
+from app.routers.deps import AppSessionFactoryDep
 from app.schemas.chat import ChatRequest
 from app.services.cache import CachedAnswer, ResponseCache, compute_kb_version, get_redis
 from app.services.llm import LLMGateway
@@ -30,10 +30,6 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["chat"])
 
 HEARTBEAT_SECONDS = 15
-
-
-def get_chat_sessionmaker() -> async_sessionmaker[AsyncSession]:
-    return async_session_factory
 
 
 def get_chat_checkpointer(request: Request) -> Any:
@@ -54,12 +50,12 @@ def _sse(event: str, payload: dict[str, Any]) -> ServerSentEvent:
 
 
 async def _ensure_conversation(
-    sessionmaker: async_sessionmaker[AsyncSession],
+    db: SessionFactory,
     org_id: uuid.UUID,
     conversation_id: uuid.UUID | None,
     channel: ConversationChannel,
 ) -> uuid.UUID:
-    async with sessionmaker() as session:
+    async with db() as session:
         if conversation_id is not None:
             conversation = await session.get(Conversation, conversation_id)
             if conversation is None or conversation.org_id != org_id:
@@ -69,12 +65,12 @@ async def _ensure_conversation(
             return conversation.id
         conversation = Conversation(org_id=org_id, channel=channel)
         session.add(conversation)
-        await session.commit()
+        await session.flush()
         return conversation.id
 
 
 async def _persist_message(
-    sessionmaker: async_sessionmaker[AsyncSession],
+    db: SessionFactory,
     *,
     org_id: uuid.UUID,
     conversation_id: uuid.UUID,
@@ -87,7 +83,7 @@ async def _persist_message(
     tokens_out: int | None = None,
     latency_ms: int | None = None,
 ) -> uuid.UUID:
-    async with sessionmaker() as session:
+    async with db() as session:
         message = Message(
             org_id=org_id,
             conversation_id=conversation_id,
@@ -101,7 +97,7 @@ async def _persist_message(
             latency_ms=latency_ms,
         )
         session.add(message)
-        await session.commit()
+        await session.flush()
         return message.id
 
 
@@ -129,7 +125,7 @@ async def _replay_cached(
 
 async def run_chat_stream(
     *,
-    sessionmaker: async_sessionmaker[AsyncSession],
+    db: SessionFactory,
     gateway: LLMGateway,
     checkpointer: Any,
     cache: ResponseCache,
@@ -141,26 +137,28 @@ async def run_chat_stream(
     debug: bool = False,
     user_identifier: str | None = None,
 ) -> EventSourceResponse:
-    """Shared SSE chat turn used by the dashboard and widget endpoints."""
-    resolved_conversation_id = await _ensure_conversation(
-        sessionmaker, org_id, conversation_id, channel
-    )
+    """Shared SSE chat turn used by the dashboard and widget endpoints.
+
+    ``db`` is a tenant-scoped factory: every ``db()`` block is its own short
+    transaction with ``app.current_tenant`` set, so no transaction (and no
+    connection) is held open for the lifetime of the stream.
+    """
+    resolved_conversation_id = await _ensure_conversation(db, org_id, conversation_id, channel)
     if user_identifier and conversation_id is None:
-        async with sessionmaker() as session:
+        async with db() as session:
             conversation = await session.get(Conversation, resolved_conversation_id)
             if conversation is not None:
                 conversation.user_identifier = user_identifier
-                await session.commit()
 
     await _persist_message(
-        sessionmaker,
+        db,
         org_id=org_id,
         conversation_id=resolved_conversation_id,
         role=MessageRole.user,
         content=message,
     )
 
-    kb_version = await compute_kb_version(sessionmaker, org_id)
+    kb_version = await compute_kb_version(db, org_id)
     cached = None if bypass_cache else await cache.get(str(org_id), message, kb_version)
     headers = {
         "X-Accel-Buffering": "no",
@@ -169,7 +167,7 @@ async def run_chat_stream(
 
     if cached is not None:
         message_id = await _persist_message(
-            sessionmaker,
+            db,
             org_id=org_id,
             conversation_id=resolved_conversation_id,
             role=MessageRole.assistant,
@@ -189,7 +187,7 @@ async def run_chat_stream(
         final: dict[str, Any] = {}
         streamed: list[str] = []
         try:
-            deps = build_dependencies(sessionmaker=sessionmaker, gateway=gateway)
+            deps = build_dependencies(session_factory=db, gateway=gateway)
             graph = build_agent_graph(deps, checkpointer=checkpointer)
             initial = {
                 "org_id": str(org_id),
@@ -224,7 +222,7 @@ async def run_chat_stream(
 
             escalated = bool(final.get("escalated", False))
             message_id = await _persist_message(
-                sessionmaker,
+                db,
                 org_id=org_id,
                 conversation_id=resolved_conversation_id,
                 role=MessageRole.assistant,
@@ -298,13 +296,13 @@ async def run_chat_stream(
 @router.post("/chat")
 async def chat(
     request: ChatRequest,
-    sessionmaker: Annotated[async_sessionmaker[AsyncSession], Depends(get_chat_sessionmaker)],
+    session_factory: AppSessionFactoryDep,
     checkpointer: Annotated[Any, Depends(get_chat_checkpointer)],
     gateway: Annotated[LLMGateway, Depends(get_chat_gateway)],
     cache: Annotated[ResponseCache, Depends(get_chat_cache)],
 ) -> EventSourceResponse:
     return await run_chat_stream(
-        sessionmaker=sessionmaker,
+        db=TenantSessionFactory(request.org_id, session_factory=session_factory),
         gateway=gateway,
         checkpointer=checkpointer,
         cache=cache,

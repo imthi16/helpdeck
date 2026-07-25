@@ -8,10 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.main import app
 from app.models import Organization
-from app.routers.internal import (
-    get_search_sessionmaker,
-    require_internal_enabled,
-)
+from app.routers.deps import get_app_session_factory
+from app.routers.internal import require_internal_enabled
 from app.services.embeddings import EmbeddingService
 from app.services.ingestion.seed import seed_corpus
 from app.services.retrieval import HybridRetriever
@@ -80,12 +78,12 @@ async def test_internal_search_disabled_returns_404() -> None:
 
 
 async def test_internal_search_enabled_returns_results(
-    db_sessionmaker: Sessionmaker,
+    app_sessionmaker: Sessionmaker,
     seeded_org: tuple[uuid.UUID, LocalFileStorage],
 ) -> None:
     org_id, _ = seeded_org
     app.dependency_overrides[require_internal_enabled] = lambda: None
-    app.dependency_overrides[get_search_sessionmaker] = lambda: db_sessionmaker
+    app.dependency_overrides[get_app_session_factory] = lambda: app_sessionmaker
     try:
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

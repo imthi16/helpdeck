@@ -3,10 +3,10 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import get_settings
-from app.core.db import async_session_factory
+from app.core.db import TenantSessionFactory
+from app.routers.deps import AppSessionFactoryDep
 from app.schemas.search import SearchRequest, SearchResponse, SearchResultChunk
 from app.services.embeddings import EmbeddingService
 from app.services.reranker import Reranker, get_reranker, retrieve_reranked
@@ -18,10 +18,6 @@ router = APIRouter(prefix="/internal", tags=["internal"])
 def require_internal_enabled() -> None:
     if not get_settings().enable_internal_routes:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
-
-
-def get_search_sessionmaker() -> async_sessionmaker[AsyncSession]:
-    return async_session_factory
 
 
 def get_search_embedding_service() -> EmbeddingService:
@@ -39,11 +35,12 @@ def get_search_reranker() -> Reranker:
 )
 async def internal_search(
     request: SearchRequest,
-    sessionmaker: Annotated[async_sessionmaker[AsyncSession], Depends(get_search_sessionmaker)],
+    session_factory: AppSessionFactoryDep,
     embedding_service: Annotated[EmbeddingService, Depends(get_search_embedding_service)],
     reranker: Annotated[Reranker, Depends(get_search_reranker)],
 ) -> SearchResponse:
-    retriever = HybridRetriever(sessionmaker, embedding_service)
+    db = TenantSessionFactory(request.org_id, session_factory=session_factory)
+    retriever = HybridRetriever(db, embedding_service)
     candidates = max(50, request.top_n)
     results = await retrieve_reranked(
         retriever,

@@ -15,9 +15,9 @@ from typing import Any
 
 import redis.asyncio as redis
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import get_settings
+from app.core.db import SessionFactory
 from app.models import Document, DocumentStatus
 
 _WHITESPACE = re.compile(r"\s+")
@@ -69,11 +69,9 @@ class ResponseCache:
         await self._client.set(cache_key(org_id, query, kb_version), answer.to_json(), ex=self._ttl)
 
 
-async def compute_kb_version(
-    sessionmaker: async_sessionmaker[AsyncSession], org_id: uuid.UUID
-) -> str:
+async def compute_kb_version(session_factory: SessionFactory, org_id: uuid.UUID) -> str:
     """A token that changes whenever the org's ready knowledge base changes."""
-    async with sessionmaker() as session:
+    async with session_factory() as session:
         count, latest = (
             await session.execute(
                 select(func.count(Document.id), func.max(Document.updated_at)).where(

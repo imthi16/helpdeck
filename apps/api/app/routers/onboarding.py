@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.db import async_session_factory
 from app.models import Organization
 from app.routers.auth import get_current_user
+from app.routers.deps import current_org_id
 from app.schemas.auth import UserResponse
 from app.services.auth import load_user_response
 
@@ -21,15 +22,8 @@ class CompleteOnboardingRequest(BaseModel):
 
 
 def get_onboarding_sessionmaker() -> async_sessionmaker[AsyncSession]:
+    """Identity session: this handler only touches ``organizations``/``users``."""
     return async_session_factory
-
-
-def current_org_id(
-    current_user: Annotated[UserResponse, Depends(get_current_user)],
-) -> uuid.UUID:
-    if not current_user.memberships:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="no organization")
-    return current_user.memberships[0].org_id
 
 
 @router.post("/complete", response_model=UserResponse)

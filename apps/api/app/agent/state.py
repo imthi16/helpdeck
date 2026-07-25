@@ -3,8 +3,7 @@
 from dataclasses import dataclass
 from typing import Any, TypedDict
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
+from app.core.db import SessionFactory
 from app.services.embeddings import EmbeddingService
 from app.services.llm import LLMGateway
 from app.services.reranker import Reranker
@@ -43,7 +42,9 @@ class AgentState(TypedDict, total=False):
 @dataclass
 class AgentDependencies:
     gateway: LLMGateway
-    sessionmaker: async_sessionmaker[AsyncSession]
+    # Tenant-scoped in the request path: each call is one transaction with
+    # app.current_tenant set, and it commits on clean exit (never commit inside).
+    session_factory: SessionFactory
     embedding_service: EmbeddingService
     reranker: Reranker
     faithfulness_threshold: float

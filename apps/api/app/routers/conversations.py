@@ -3,11 +3,10 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.db import async_session_factory
 from app.models import (
     Conversation,
     ConversationChannel,
@@ -17,8 +16,7 @@ from app.models import (
     Message,
     MessageRole,
 )
-from app.routers.auth import get_current_user
-from app.schemas.auth import UserResponse
+from app.routers.deps import OrgDep, TenantDbDep
 from app.schemas.conversation import (
     ConversationDetail,
     ConversationSummary,
@@ -28,24 +26,6 @@ from app.schemas.conversation import (
 )
 
 router = APIRouter(prefix="/api/v1/conversations", tags=["conversations"])
-
-
-def get_conversations_sessionmaker() -> async_sessionmaker[AsyncSession]:
-    return async_session_factory
-
-
-def current_org_id(
-    current_user: Annotated[UserResponse, Depends(get_current_user)],
-) -> uuid.UUID:
-    if not current_user.memberships:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="no organization")
-    return current_user.memberships[0].org_id
-
-
-SessionmakerDep = Annotated[
-    async_sessionmaker[AsyncSession], Depends(get_conversations_sessionmaker)
-]
-OrgDep = Annotated[uuid.UUID, Depends(current_org_id)]
 
 
 async def _load_owned(
@@ -59,7 +39,7 @@ async def _load_owned(
 
 @router.get("", response_model=list[ConversationSummary])
 async def list_conversations(
-    sessionmaker: SessionmakerDep,
+    db: TenantDbDep,
     org_id: OrgDep,
     status_filter: Annotated[ConversationStatus | None, Query(alias="status")] = None,
     channel: ConversationChannel | None = None,
@@ -70,7 +50,7 @@ async def list_conversations(
     if channel is not None:
         filters.append(Conversation.channel == channel)
 
-    async with sessionmaker() as session:
+    async with db() as session:
         rows = (
             await session.execute(
                 select(Conversation, func.count(Message.id))
@@ -96,9 +76,9 @@ async def list_conversations(
 
 @router.get("/{conversation_id}", response_model=ConversationDetail)
 async def get_conversation(
-    conversation_id: uuid.UUID, sessionmaker: SessionmakerDep, org_id: OrgDep
+    conversation_id: uuid.UUID, db: TenantDbDep, org_id: OrgDep
 ) -> ConversationDetail:
-    async with sessionmaker() as session:
+    async with db() as session:
         conversation = await _load_owned(session, conversation_id, org_id)
         messages = (
             (
@@ -151,9 +131,9 @@ async def get_conversation(
 
 @router.post("/{conversation_id}/resolve", response_model=ConversationDetail)
 async def resolve_conversation(
-    conversation_id: uuid.UUID, sessionmaker: SessionmakerDep, org_id: OrgDep
+    conversation_id: uuid.UUID, db: TenantDbDep, org_id: OrgDep
 ) -> ConversationDetail:
-    async with sessionmaker() as session:
+    async with db() as session:
         conversation = await _load_owned(session, conversation_id, org_id)
         conversation.status = ConversationStatus.closed
         pending = (
@@ -170,18 +150,17 @@ async def resolve_conversation(
         )
         for escalation in pending:
             escalation.status = EscalationStatus.resolved
-        await session.commit()
-    return await get_conversation(conversation_id, sessionmaker, org_id)
+    return await get_conversation(conversation_id, db, org_id)
 
 
 @router.post("/{conversation_id}/reply", response_model=ConversationDetail)
 async def reply_to_conversation(
     conversation_id: uuid.UUID,
     payload: ReplyRequest,
-    sessionmaker: SessionmakerDep,
+    db: TenantDbDep,
     org_id: OrgDep,
 ) -> ConversationDetail:
-    async with sessionmaker() as session:
+    async with db() as session:
         conversation = await _load_owned(session, conversation_id, org_id)
         session.add(
             Message(
@@ -191,5 +170,4 @@ async def reply_to_conversation(
                 content=payload.content,
             )
         )
-        await session.commit()
-    return await get_conversation(conversation_id, sessionmaker, org_id)
+    return await get_conversation(conversation_id, db, org_id)

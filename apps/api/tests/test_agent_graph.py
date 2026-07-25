@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.agent.graph import build_agent_graph, parse_citations, parse_confidence, parse_intent
 from app.agent.runner import build_dependencies, run_turn
 from app.core.config import get_settings
+from app.core.db import TenantSessionFactory
 from app.models import (
     Conversation,
     ConversationChannel,
@@ -102,11 +103,15 @@ async def _escalations(sm: Sessionmaker, conversation_id: uuid.UUID) -> list[Esc
 
 
 async def test_in_kb_question_answers_with_valid_citations(
-    db_sessionmaker: Sessionmaker, seeded: uuid.UUID
+    db_sessionmaker: Sessionmaker, app_sessionmaker: Sessionmaker, seeded: uuid.UUID
 ) -> None:
     org_id = seeded
     conversation_id = await _make_conversation(db_sessionmaker, org_id)
-    deps = build_dependencies(sessionmaker=db_sessionmaker)
+    # Same wiring as the request path: the agent reads and writes through a
+    # tenant-scoped session on the restricted role, so RLS is in force here too.
+    deps = build_dependencies(
+        session_factory=TenantSessionFactory(org_id, session_factory=app_sessionmaker)
+    )
 
     result = await run_turn(
         deps,
@@ -134,11 +139,15 @@ async def test_in_kb_question_answers_with_valid_citations(
 
 
 async def test_out_of_kb_question_refuses_and_escalates(
-    db_sessionmaker: Sessionmaker, seeded: uuid.UUID
+    db_sessionmaker: Sessionmaker, app_sessionmaker: Sessionmaker, seeded: uuid.UUID
 ) -> None:
     org_id = seeded
     conversation_id = await _make_conversation(db_sessionmaker, org_id)
-    deps = build_dependencies(sessionmaker=db_sessionmaker)
+    # Same wiring as the request path: the agent reads and writes through a
+    # tenant-scoped session on the restricted role, so RLS is in force here too.
+    deps = build_dependencies(
+        session_factory=TenantSessionFactory(org_id, session_factory=app_sessionmaker)
+    )
 
     result = await run_turn(
         deps,
@@ -159,11 +168,15 @@ async def test_out_of_kb_question_refuses_and_escalates(
 
 
 async def test_human_request_escalates_without_retrieval(
-    db_sessionmaker: Sessionmaker, seeded: uuid.UUID
+    db_sessionmaker: Sessionmaker, app_sessionmaker: Sessionmaker, seeded: uuid.UUID
 ) -> None:
     org_id = seeded
     conversation_id = await _make_conversation(db_sessionmaker, org_id)
-    deps = build_dependencies(sessionmaker=db_sessionmaker)
+    # Same wiring as the request path: the agent reads and writes through a
+    # tenant-scoped session on the restricted role, so RLS is in force here too.
+    deps = build_dependencies(
+        session_factory=TenantSessionFactory(org_id, session_factory=app_sessionmaker)
+    )
 
     result = await run_turn(
         deps,
@@ -187,11 +200,15 @@ def _psycopg_dsn() -> str:
 
 
 async def test_postgres_checkpointer_persists_turn_state(
-    db_sessionmaker: Sessionmaker, seeded: uuid.UUID
+    db_sessionmaker: Sessionmaker, app_sessionmaker: Sessionmaker, seeded: uuid.UUID
 ) -> None:
     org_id = seeded
     conversation_id = await _make_conversation(db_sessionmaker, org_id)
-    deps = build_dependencies(sessionmaker=db_sessionmaker)
+    # Same wiring as the request path: the agent reads and writes through a
+    # tenant-scoped session on the restricted role, so RLS is in force here too.
+    deps = build_dependencies(
+        session_factory=TenantSessionFactory(org_id, session_factory=app_sessionmaker)
+    )
 
     async with AsyncPostgresSaver.from_conn_string(_psycopg_dsn()) as saver:
         await saver.setup()  # library-managed checkpoint tables (not app schema)

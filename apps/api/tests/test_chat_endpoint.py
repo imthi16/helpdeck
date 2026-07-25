@@ -11,7 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.main import app
 from app.models import Message, MessageRole, Organization
-from app.routers.chat import get_chat_cache, get_chat_gateway, get_chat_sessionmaker
+from app.routers.chat import get_chat_cache, get_chat_gateway
+from app.routers.deps import get_app_session_factory
 from app.services.cache import ResponseCache, get_redis
 from app.services.embeddings import EmbeddingService
 from app.services.ingestion.seed import seed_corpus
@@ -111,10 +112,10 @@ async def _messages(sm: Sessionmaker, conversation_id: uuid.UUID) -> list[Messag
 
 
 async def test_chat_streams_events_ending_in_done(
-    db_sessionmaker: Sessionmaker, seeded: uuid.UUID
+    db_sessionmaker: Sessionmaker, app_sessionmaker: Sessionmaker, seeded: uuid.UUID
 ) -> None:
     org_id = seeded
-    app.dependency_overrides[get_chat_sessionmaker] = lambda: db_sessionmaker
+    app.dependency_overrides[get_app_session_factory] = lambda: app_sessionmaker
     app.dependency_overrides[get_chat_gateway] = lambda: LLMGateway(
         OfflineGroundedProvider(), cheap_model="c", strong_model="s"
     )
@@ -149,13 +150,13 @@ async def test_chat_streams_events_ending_in_done(
 
 
 async def test_identical_query_served_from_cache_without_llm_call(
-    db_sessionmaker: Sessionmaker, seeded: uuid.UUID
+    db_sessionmaker: Sessionmaker, app_sessionmaker: Sessionmaker, seeded: uuid.UUID
 ) -> None:
     org_id = seeded
     provider = CountingProvider()
     gateway = LLMGateway(provider, cheap_model="c", strong_model="s")
     redis_client = get_redis()
-    app.dependency_overrides[get_chat_sessionmaker] = lambda: db_sessionmaker
+    app.dependency_overrides[get_app_session_factory] = lambda: app_sessionmaker
     app.dependency_overrides[get_chat_gateway] = lambda: gateway
     app.dependency_overrides[get_chat_cache] = lambda: ResponseCache(redis_client, ttl_seconds=30)
     body = {
@@ -194,10 +195,10 @@ async def test_identical_query_served_from_cache_without_llm_call(
 
 
 async def test_disconnect_midstream_leaves_no_assistant_message(
-    db_sessionmaker: Sessionmaker, seeded: uuid.UUID
+    db_sessionmaker: Sessionmaker, app_sessionmaker: Sessionmaker, seeded: uuid.UUID
 ) -> None:
     org_id = seeded
-    app.dependency_overrides[get_chat_sessionmaker] = lambda: db_sessionmaker
+    app.dependency_overrides[get_app_session_factory] = lambda: app_sessionmaker
     app.dependency_overrides[get_chat_gateway] = lambda: LLMGateway(
         SlowOfflineProvider(delay=0.05), cheap_model="c", strong_model="s"
     )

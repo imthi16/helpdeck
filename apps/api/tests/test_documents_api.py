@@ -9,8 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.main import app
 from app.models import Document, DocumentStatus, Organization, User
 from app.routers.auth import get_auth_sessionmaker
+from app.routers.deps import get_app_session_factory
 from app.routers.documents import (
-    get_documents_sessionmaker,
     get_documents_storage,
     get_ingest_queue,
 )
@@ -34,10 +34,17 @@ def queue() -> RecordingQueue:
 
 
 @pytest.fixture(autouse=True)
-def overrides(db_sessionmaker: Sessionmaker, tmp_path: Path, queue: RecordingQueue):
+def overrides(
+    db_sessionmaker: Sessionmaker,
+    app_sessionmaker: Sessionmaker,
+    tmp_path: Path,
+    queue: RecordingQueue,
+):
     storage = LocalFileStorage(tmp_path)
+    # Auth reads identity tables (no RLS, not granted to the app role) as the
+    # superuser; document handlers are served by the restricted role under RLS.
     app.dependency_overrides[get_auth_sessionmaker] = lambda: db_sessionmaker
-    app.dependency_overrides[get_documents_sessionmaker] = lambda: db_sessionmaker
+    app.dependency_overrides[get_app_session_factory] = lambda: app_sessionmaker
     app.dependency_overrides[get_documents_storage] = lambda: storage
     app.dependency_overrides[get_ingest_queue] = lambda: queue
     yield storage

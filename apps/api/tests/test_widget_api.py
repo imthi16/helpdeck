@@ -12,6 +12,7 @@ from app.models import (
     MessageRole,
     Organization,
 )
+from app.routers.deps import get_app_session_factory
 from app.routers.widget import get_widget_rate_limiter, get_widget_sessionmaker
 from app.services.cache import get_redis
 from app.services.rate_limit import RateLimiter
@@ -20,8 +21,11 @@ Sessionmaker = async_sessionmaker[AsyncSession]
 
 
 @pytest.fixture(autouse=True)
-def overrides(db_sessionmaker: Sessionmaker):
+def overrides(db_sessionmaker: Sessionmaker, app_sessionmaker: Sessionmaker):
+    # The public-key -> org lookup reads `organizations` (identity, superuser);
+    # chat + feedback then run under RLS as the restricted app role.
     app.dependency_overrides[get_widget_sessionmaker] = lambda: db_sessionmaker
+    app.dependency_overrides[get_app_session_factory] = lambda: app_sessionmaker
     yield
     app.dependency_overrides.clear()
 

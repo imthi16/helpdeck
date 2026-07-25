@@ -50,3 +50,27 @@ async def app_login(db_engine: AsyncEngine) -> None:
 @pytest.fixture
 def db_sessionmaker(db_engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
     return async_sessionmaker(db_engine, expire_on_commit=False)
+
+
+@pytest.fixture
+async def app_engine(app_login: None) -> AsyncEngine:
+    """Loop-local engine for the restricted `helpdeck_app` role.
+
+    The module-global engine in `app.core.db` is bound to the server's loop, so
+    tests build their own (same reason `tests/test_rls.py` does).
+    """
+    engine = create_async_engine(get_settings().app_database_url)
+    yield engine
+    await engine.dispose()
+
+
+@pytest.fixture
+def app_sessionmaker(app_engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
+    """The sessionmaker API tests inject so requests are served as the app role.
+
+    Override `app.routers.deps.get_app_session_factory` with this and the whole
+    request path runs under RLS, exactly as it does in production — a missing
+    grant or an unset tenant scope then fails the test instead of surfacing at
+    runtime. Test setup/teardown keeps using `db_sessionmaker` (superuser).
+    """
+    return async_sessionmaker(app_engine, expire_on_commit=False)
