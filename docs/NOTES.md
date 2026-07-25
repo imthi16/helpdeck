@@ -245,3 +245,34 @@ the row precisely.
 
 Deleting a user sets `actor_user_id` to NULL but `actor_email` is denormalised onto the row,
 so removing an account cannot quietly erase who performed an action.
+
+## Phase 5.5 — Analytics
+
+`GET /api/v1/analytics/overview?days=N` over the **tenant session**, so the numbers are the
+caller's org by construction rather than by remembering a filter. Read-only, so every role
+may see it.
+
+- **deflection** = conversations with an assistant message and no escalation ÷ total;
+  **escalation** = conversations with ≥1 escalation ÷ total. Both are returned as 0–1
+  fractions; the dashboard formats the percentage.
+- **conversations over time** is zero-filled with `generate_series`, so a quiet day is a zero
+  bar rather than a gap in the axis.
+- **top unanswered**: user questions from turns that escalated or came back below
+  `LOW_CONFIDENCE`, greedily clustered by cosine similarity (≥ 0.85) over at most the last
+  200 questions. Offline the embedding provider is a bag-of-tokens hash, so reworded
+  duplicates still group by shared vocabulary — the clustering is meaningful in both modes.
+- **No rollup table.** Live queries over one org are a few index scans; issue #63 tracks the
+  nightly rollup for when that stops being true.
+
+`tests/test_analytics_api.py` seeds an exact shape (5 conversations, 2 escalated, CSAT 4 and
+5, one question asked twice) and asserts exact values — 60% deflection, 40% escalation, CSAT
+4.5, the duplicate clustered into one row with count 2 — rather than "looks plausible".
+
+### Charts
+
+Recharts (dashboard only — the widget's 60KB budget is untouched), built against the
+`dataviz` skill: one series so no legend, the validated blue for each mode
+(`#2a78d6` light / `#3987e5` dark, both PASS the palette validator against their surfaces),
+recessive hairline grid, 24px max bar with a 4px rounded data-end, only the busiest day
+directly labelled, tooltip text in ink rather than the series colour, and a "Show data"
+table view so nothing is gated behind reading a chart.
