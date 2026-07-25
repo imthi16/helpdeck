@@ -212,3 +212,36 @@ the throttle every widget request would carry a write.
 Keys are a security surface, so unlike the members roster even *reading* them is admin+:
 agent and viewer get 403 and the Settings tab is hidden for them. Issuing or revoking a
 **secret** key is owner-only; admins manage public keys.
+
+## Phase 5.4 — Audit log
+
+Roles and keys were enforced (5.2/5.3) but nothing recorded *who did what*. `audit_logs` now
+captures auth events, member/invite/role changes, key create/revoke, document deletion, and
+settings updates.
+
+### Append-only is a privilege, not a convention
+
+The migration grants the app role exactly `SELECT, INSERT` on `audit_logs` and nothing else,
+so the application has no privilege to rewrite or erase history — `UPDATE`/`DELETE` fail at
+the database, which is what `tests/test_audit_log.py` asserts. The superuser keeps full
+rights so `ON DELETE CASCADE` from `organizations` and test cleanup still work; the
+alternative (a trigger rejecting every delete) would have broken org deletion.
+
+The writer (`app/services/audit.py`) opens its own app-role session and is **best-effort**:
+a failed audit write logs a warning instead of failing the action it describes. Losing a row
+is bad; failing an invite the user already completed is worse, and the failure is visible in
+the logs either way.
+
+No RLS, like the other identity-adjacent tables — a login event exists before any org context
+does (`org_id` is nullable for exactly that reason). Reads filter by `org_id` explicitly and
+are admin+ only, keyset paginated on `created_at`.
+
+### What is never recorded
+
+Only ids, emails, role names, key kinds/names, and document titles. Not secrets, not tokens,
+not document contents. Notably the audit metadata does **not** include an API key's `prefix`,
+even though the dashboard shows it: the trail is permanent, and the key id already identifies
+the row precisely.
+
+Deleting a user sets `actor_user_id` to NULL but `actor_email` is denormalised onto the row,
+so removing an account cannot quietly erase who performed an action.

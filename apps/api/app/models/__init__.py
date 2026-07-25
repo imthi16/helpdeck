@@ -1,3 +1,4 @@
+from app.models.audit import AuditAction, AuditLog
 from app.models.base import Base
 from app.models.conversation import (
     Conversation,
@@ -27,6 +28,8 @@ from app.models.tenancy import (
 __all__ = [
     "ApiKey",
     "ApiKeyKind",
+    "AuditAction",
+    "AuditLog",
     "Base",
     "Chunk",
     "Conversation",

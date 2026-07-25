@@ -15,9 +15,18 @@ from fastapi import (
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Chunk, Document, DocumentSourceType, DocumentStatus
-from app.routers.deps import ADMIN_ROLES, OrgDep, TenantDbDep, require_role
+from app.models import AuditAction, Chunk, Document, DocumentSourceType, DocumentStatus
+from app.routers.auth import get_current_user
+from app.routers.deps import (
+    ADMIN_ROLES,
+    AppSessionFactoryDep,
+    OrgDep,
+    TenantDbDep,
+    require_role,
+)
+from app.schemas.auth import UserResponse
 from app.schemas.document import DocumentCreate, DocumentResponse
+from app.services import audit as audit_service
 from app.services.queue import ArqIngestQueue, IngestQueue
 from app.services.storage import ContentStorage, document_key, get_storage
 
@@ -207,8 +216,23 @@ async def delete_document(
     db: TenantDbDep,
     storage: StorageDep,
     org_id: OrgDep,
+    app_session_factory: AppSessionFactoryDep,
+    request: Request,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
 ) -> None:
     async with db() as session:
-        await _get_owned_document(session, document_id, org_id)  # 404s if not owned
+        document = await _get_owned_document(session, document_id, org_id)  # 404s if not owned
+        title = document.title
         await session.execute(delete(Document).where(Document.id == document_id))
     await storage.delete(document_key(str(document_id)))
+    # Title only — never document contents.
+    await audit_service.record(
+        AuditAction.document_deleted,
+        org_id=org_id,
+        actor=current_user,
+        target_type="document",
+        target_id=document_id,
+        metadata={"title": title},
+        request=request,
+        session_factory=app_session_factory,
+    )

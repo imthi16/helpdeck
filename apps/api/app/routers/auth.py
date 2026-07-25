@@ -6,15 +6,17 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import get_settings
-from app.core.db import async_session_factory
+from app.core.db import async_session_factory, get_app_session_factory
 from app.core.security import (
     TokenError,
     create_access_token,
     create_refresh_token,
     decode_token,
 )
+from app.models import AuditAction
 from app.schemas.auth import LoginRequest, SignupRequest, UserResponse
 from app.schemas.member import AcceptInviteRequest, InvitePreview
+from app.services import audit as audit_service
 from app.services import members as members_service
 from app.services.auth import (
     EmailAlreadyExists,
@@ -25,6 +27,8 @@ from app.services.auth import (
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+AuditFactoryDep = Annotated[async_sessionmaker[AsyncSession], Depends(get_app_session_factory)]
 
 ACCESS_COOKIE = "helpdeck_access"
 REFRESH_COOKIE = "helpdeck_refresh"
@@ -89,8 +93,10 @@ async def get_current_user(
 @router.post("/signup", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def signup_endpoint(
     payload: SignupRequest,
+    request: Request,
     response: Response,
     sessionmaker: Annotated[async_sessionmaker[AsyncSession], Depends(get_auth_sessionmaker)],
+    audit_factory: AuditFactoryDep,
 ) -> UserResponse:
     async with sessionmaker() as session:
         try:
@@ -109,14 +115,25 @@ async def signup_endpoint(
 
     assert user_response is not None
     _set_auth_cookies(response, create_access_token(user.id), create_refresh_token(user.id))
+    await audit_service.record(
+        AuditAction.auth_signup,
+        org_id=user_response.memberships[0].org_id if user_response.memberships else None,
+        actor=user_response,
+        target_type="user",
+        target_id=user.id,
+        request=request,
+        session_factory=audit_factory,
+    )
     return user_response
 
 
 @router.post("/login", response_model=UserResponse)
 async def login_endpoint(
     payload: LoginRequest,
+    request: Request,
     response: Response,
     sessionmaker: Annotated[async_sessionmaker[AsyncSession], Depends(get_auth_sessionmaker)],
+    audit_factory: AuditFactoryDep,
 ) -> UserResponse:
     async with sessionmaker() as session:
         try:
@@ -129,6 +146,15 @@ async def login_endpoint(
 
     assert user_response is not None
     _set_auth_cookies(response, create_access_token(user.id), create_refresh_token(user.id))
+    await audit_service.record(
+        AuditAction.auth_login,
+        org_id=user_response.memberships[0].org_id if user_response.memberships else None,
+        actor=user_response,
+        target_type="user",
+        target_id=user.id,
+        request=request,
+        session_factory=audit_factory,
+    )
     return user_response
 
 
@@ -201,8 +227,10 @@ async def preview_invite_endpoint(
 async def accept_invite_endpoint(
     token: str,
     payload: AcceptInviteRequest,
+    request: Request,
     response: Response,
     sessionmaker: Annotated[async_sessionmaker[AsyncSession], Depends(get_auth_sessionmaker)],
+    audit_factory: AuditFactoryDep,
     current_user: Annotated[UserResponse | None, Depends(_optional_current_user)],
 ) -> UserResponse:
     """Redeem an invite.
@@ -233,4 +261,15 @@ async def accept_invite_endpoint(
     assert user_response is not None
     if current_user is None:
         _set_auth_cookies(response, create_access_token(user.id), create_refresh_token(user.id))
+    joined = user_response.memberships[-1] if user_response.memberships else None
+    await audit_service.record(
+        AuditAction.member_joined,
+        org_id=joined.org_id if joined else None,
+        actor=user_response,
+        target_type="user",
+        target_id=user.id,
+        metadata={"role": str(joined.role)} if joined else {},
+        request=request,
+        session_factory=audit_factory,
+    )
     return user_response

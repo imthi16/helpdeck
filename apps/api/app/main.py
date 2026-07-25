@@ -8,6 +8,7 @@ from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from app.routers import (
     api_keys,
+    audit,
     auth,
     chat,
     conversations,
@@ -78,6 +79,7 @@ def create_app() -> FastAPI:
     application.include_router(conversations.router)
     application.include_router(members.router)
     application.include_router(api_keys.router)
+    application.include_router(audit.router)
     application.include_router(widget.router)
     # Router is always mounted; each request is gated by ENABLE_INTERNAL_ROUTES.
     application.include_router(internal.router)

@@ -35,6 +35,7 @@ import {
   revokeApiKey,
   type ApiKey,
 } from "@/lib/api-keys";
+import { actionLabel, describeEvent, listAuditEvents, type AuditEvent } from "@/lib/audit";
 import {
   ADMIN_ROLES,
   ROLE_HELP,
@@ -649,6 +650,73 @@ function ApiKeysTab({ myRole }: { myRole: Role }) {
   );
 }
 
+function AuditLogTab() {
+  const [events, setEvents] = useState<AuditEvent[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    listAuditEvents()
+      .then((rows) => {
+        if (active) setEvents(rows);
+      })
+      .catch((err) => {
+        if (active) setError(err instanceof Error ? err.message : "Failed to load the audit log");
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Audit log</CardTitle>
+      </CardHeader>
+      <CardContent>
+        {error && (
+          <p role="alert" className="mb-3 text-sm text-red-600">
+            {error}
+          </p>
+        )}
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>When</TableHead>
+              <TableHead>Who</TableHead>
+              <TableHead>Action</TableHead>
+              <TableHead>Details</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {events.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={4} className="text-center text-muted-foreground">
+                  Nothing recorded yet.
+                </TableCell>
+              </TableRow>
+            ) : (
+              events.map((event) => (
+                <TableRow key={event.id} data-testid="audit-row" data-action={event.action}>
+                  <TableCell className="whitespace-nowrap text-muted-foreground">
+                    {new Date(event.created_at).toLocaleString()}
+                  </TableCell>
+                  <TableCell>{event.actor_email ?? "—"}</TableCell>
+                  <TableCell className="font-medium">{actionLabel(event.action)}</TableCell>
+                  <TableCell className="text-muted-foreground">{describeEvent(event)}</TableCell>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
+        <p className="mt-3 text-sm text-muted-foreground">
+          The log is append-only — the application has no privilege to edit or delete entries.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function SettingsPage() {
   const { user, refresh } = useSession();
   const membership = user?.memberships[0];
@@ -666,8 +734,10 @@ export default function SettingsPage() {
         <TabsList>
           <TabsTrigger value="organization">Organization</TabsTrigger>
           <TabsTrigger value="members">Members</TabsTrigger>
-          {/* Keys are admin+ even to read, so the tab is hidden for others. */}
+          {/* Keys and the audit log are admin+ even to read, so those tabs are
+              hidden for other roles. */}
           {canSeeKeys && <TabsTrigger value="keys">API keys</TabsTrigger>}
+          {canSeeKeys && <TabsTrigger value="audit">Audit log</TabsTrigger>}
         </TabsList>
         <TabsContent value="organization" className="pt-4">
           <OrganizationTab
@@ -682,6 +752,11 @@ export default function SettingsPage() {
         {canSeeKeys && (
           <TabsContent value="keys" className="pt-4">
             <ApiKeysTab myRole={membership.role} />
+          </TabsContent>
+        )}
+        {canSeeKeys && (
+          <TabsContent value="audit" className="pt-4">
+            <AuditLogTab />
           </TabsContent>
         )}
       </Tabs>

@@ -8,15 +8,15 @@ identity tables only, so they use the identity session, not the tenant one.
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import get_settings
 from app.core.db import async_session_factory
 from app.core.logging import get_logger
-from app.models import User
+from app.models import AuditAction, User
 from app.routers.auth import get_current_user
-from app.routers.deps import ADMIN_ROLES, AdminDep, MemberDep, require_role
+from app.routers.deps import ADMIN_ROLES, AdminDep, AppSessionFactoryDep, MemberDep, require_role
 from app.schemas.auth import UserResponse
 from app.schemas.member import (
     InviteRequest,
@@ -24,6 +24,7 @@ from app.schemas.member import (
     MemberResponse,
     RoleUpdateRequest,
 )
+from app.services import audit as audit_service
 from app.services import members as members_service
 
 logger = get_logger(__name__)
@@ -104,7 +105,9 @@ async def list_invites(
 async def create_invite(
     payload: InviteRequest,
     sessionmaker: SessionmakerDep,
+    app_session_factory: AppSessionFactoryDep,
     membership: AdminDep,
+    request: Request,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
 ) -> InviteResponse:
     async with sessionmaker() as session:
@@ -128,6 +131,16 @@ async def create_invite(
         invite_id=str(invitation.id),
         role=str(invitation.role),
     )
+    await audit_service.record(
+        AuditAction.member_invited,
+        org_id=membership.org_id,
+        actor=current_user,
+        target_type="invitation",
+        target_id=invitation.id,
+        metadata={"email": invitation.email, "role": str(invitation.role)},
+        request=request,
+        session_factory=app_session_factory,
+    )
     return InviteResponse(
         id=invitation.id,
         email=invitation.email,
@@ -144,7 +157,12 @@ async def create_invite(
     dependencies=[Depends(require_role(*ADMIN_ROLES))],
 )
 async def revoke_invite(
-    invite_id: uuid.UUID, sessionmaker: SessionmakerDep, membership: MemberDep
+    invite_id: uuid.UUID,
+    sessionmaker: SessionmakerDep,
+    app_session_factory: AppSessionFactoryDep,
+    membership: MemberDep,
+    request: Request,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
 ) -> None:
     async with sessionmaker() as session:
         try:
@@ -153,6 +171,15 @@ async def revoke_invite(
             )
         except members_service.MemberError as exc:
             raise _handle(exc) from exc
+    await audit_service.record(
+        AuditAction.member_invite_revoked,
+        org_id=membership.org_id,
+        actor=current_user,
+        target_type="invitation",
+        target_id=invite_id,
+        request=request,
+        session_factory=app_session_factory,
+    )
 
 
 @router.patch("/{user_id}", response_model=MemberResponse)
@@ -160,7 +187,10 @@ async def update_member_role(
     user_id: uuid.UUID,
     payload: RoleUpdateRequest,
     sessionmaker: SessionmakerDep,
+    app_session_factory: AppSessionFactoryDep,
     membership: AdminDep,
+    request: Request,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
 ) -> MemberResponse:
     async with sessionmaker() as session:
         try:
@@ -176,6 +206,16 @@ async def update_member_role(
         user = await session.get(User, user_id)
 
     assert user is not None
+    await audit_service.record(
+        AuditAction.member_role_changed,
+        org_id=membership.org_id,
+        actor=current_user,
+        target_type="user",
+        target_id=user_id,
+        metadata={"email": user.email, "role": str(updated.role)},
+        request=request,
+        session_factory=app_session_factory,
+    )
     return MemberResponse(
         user_id=user.id,
         email=user.email,
@@ -187,9 +227,18 @@ async def update_member_role(
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def remove_member(
-    user_id: uuid.UUID, sessionmaker: SessionmakerDep, membership: AdminDep
+    user_id: uuid.UUID,
+    sessionmaker: SessionmakerDep,
+    app_session_factory: AppSessionFactoryDep,
+    membership: AdminDep,
+    request: Request,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
 ) -> None:
     async with sessionmaker() as session:
+        # Read the email before the membership goes, so the trail names a person
+        # even if that user is later deleted entirely.
+        removed = await session.get(User, user_id)
+        removed_email = removed.email if removed is not None else None
         try:
             await members_service.remove_member(
                 session,
@@ -199,3 +248,13 @@ async def remove_member(
             )
         except members_service.MemberError as exc:
             raise _handle(exc) from exc
+    await audit_service.record(
+        AuditAction.member_removed,
+        org_id=membership.org_id,
+        actor=current_user,
+        target_type="user",
+        target_id=user_id,
+        metadata={"email": removed_email} if removed_email else {},
+        request=request,
+        session_factory=app_session_factory,
+    )

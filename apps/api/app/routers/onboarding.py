@@ -3,15 +3,16 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.db import async_session_factory
-from app.models import Organization
+from app.models import AuditAction, Organization
 from app.routers.auth import get_current_user
-from app.routers.deps import ADMIN_ROLES, current_org_id, require_role
+from app.routers.deps import ADMIN_ROLES, AppSessionFactoryDep, current_org_id, require_role
 from app.schemas.auth import UserResponse
+from app.services import audit as audit_service
 from app.services.auth import load_user_response
 
 router = APIRouter(prefix="/api/v1/onboarding", tags=["onboarding"])
@@ -34,7 +35,9 @@ def get_onboarding_sessionmaker() -> async_sessionmaker[AsyncSession]:
 async def complete_onboarding(
     payload: CompleteOnboardingRequest,
     sessionmaker: Annotated[async_sessionmaker[AsyncSession], Depends(get_onboarding_sessionmaker)],
+    app_session_factory: AppSessionFactoryDep,
     org_id: Annotated[uuid.UUID, Depends(current_org_id)],
+    request: Request,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
 ) -> UserResponse:
     async with sessionmaker() as session:
@@ -46,5 +49,16 @@ async def complete_onboarding(
         org.onboarded = True
         await session.commit()
         refreshed = await load_user_response(session, current_user.id)
+        org_name = org.name
     assert refreshed is not None
+    await audit_service.record(
+        AuditAction.settings_updated,
+        org_id=org_id,
+        actor=current_user,
+        target_type="organization",
+        target_id=org_id,
+        metadata={"name": org_name},
+        request=request,
+        session_factory=app_session_factory,
+    )
     return refreshed

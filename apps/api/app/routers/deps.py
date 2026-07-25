@@ -26,7 +26,7 @@ from typing import Annotated
 from fastapi import Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.core.db import SessionFactory, TenantSessionFactory, app_session_factory
+from app.core.db import SessionFactory, TenantSessionFactory, get_app_session_factory
 from app.models import MembershipRole
 from app.routers.auth import get_current_user
 from app.schemas.auth import OrgMembership, UserResponse
@@ -70,11 +70,6 @@ def require_role(
         return membership
 
     return dependency
-
-
-def get_app_session_factory() -> async_sessionmaker[AsyncSession]:
-    """The restricted-role sessionmaker the request path serves traffic with."""
-    return app_session_factory
 
 
 def tenant_db(

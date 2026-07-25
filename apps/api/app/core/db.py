@@ -36,6 +36,16 @@ class SessionFactory(Protocol):
     def __call__(self) -> AbstractAsyncContextManager[AsyncSession]: ...
 
 
+def get_app_session_factory() -> async_sessionmaker[AsyncSession]:
+    """The restricted-role sessionmaker the request path serves traffic with.
+
+    The single DI seam for app-role sessions: tests override this one function
+    with a loop-local engine. It lives here rather than in ``app/routers/deps.py``
+    so modules that ``deps`` itself imports (``routers/auth.py``) can use it too.
+    """
+    return app_session_factory
+
+
 async def get_session() -> AsyncIterator[AsyncSession]:
     async with async_session_factory() as session:
         yield session

@@ -8,17 +8,18 @@ throughout: `api_keys` sits outside RLS (see docs/NOTES.md).
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.db import async_session_factory
 from app.core.logging import get_logger
-from app.models import ApiKey, ApiKeyKind, MembershipRole
+from app.models import ApiKey, ApiKeyKind, AuditAction, MembershipRole
 from app.routers.auth import get_current_user
-from app.routers.deps import AdminDep
+from app.routers.deps import AdminDep, AppSessionFactoryDep
 from app.schemas.api_key import ApiKeyCreate, ApiKeyResponse
 from app.schemas.auth import UserResponse
 from app.services import api_keys as api_keys_service
+from app.services import audit as audit_service
 
 logger = get_logger(__name__)
 
@@ -80,7 +81,9 @@ async def widget_key(sessionmaker: SessionmakerDep, membership: AdminDep) -> Api
 async def create_api_key(
     payload: ApiKeyCreate,
     sessionmaker: SessionmakerDep,
+    app_session_factory: AppSessionFactoryDep,
     membership: AdminDep,
+    request: Request,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
 ) -> ApiKeyResponse:
     _require_owner_for_secrets(payload.kind, membership.role)
@@ -98,13 +101,30 @@ async def create_api_key(
         key_id=str(key.id),
         kind=str(key.kind),
     )
+    # Kind and name only. Not even the prefix: the trail is permanent, and the
+    # key id already identifies the row precisely.
+    await audit_service.record(
+        AuditAction.api_key_created,
+        org_id=membership.org_id,
+        actor=current_user,
+        target_type="api_key",
+        target_id=key.id,
+        metadata={"kind": str(key.kind), "name": key.name},
+        request=request,
+        session_factory=app_session_factory,
+    )
     # The only moment a secret exists outside the caller's hands.
     return _to_response(key, secret=raw if key.kind == ApiKeyKind.secret else None)
 
 
 @router.delete("/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def revoke_api_key(
-    key_id: uuid.UUID, sessionmaker: SessionmakerDep, membership: AdminDep
+    key_id: uuid.UUID,
+    sessionmaker: SessionmakerDep,
+    app_session_factory: AppSessionFactoryDep,
+    membership: AdminDep,
+    request: Request,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
 ) -> None:
     async with sessionmaker() as session:
         existing = await api_keys_service.resolve_key_by_id(
@@ -115,3 +135,13 @@ async def revoke_api_key(
         _require_owner_for_secrets(existing.kind, membership.role)
         await api_keys_service.revoke_key(session, org_id=membership.org_id, key_id=key_id)
     logger.info("api_key_revoked", org_id=str(membership.org_id), key_id=str(key_id))
+    await audit_service.record(
+        AuditAction.api_key_revoked,
+        org_id=membership.org_id,
+        actor=current_user,
+        target_type="api_key",
+        target_id=key_id,
+        metadata={"kind": str(existing.kind), "name": existing.name},
+        request=request,
+        session_factory=app_session_factory,
+    )
