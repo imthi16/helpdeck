@@ -7,12 +7,11 @@ Origin allowlist, and requests are rate limited per key and per IP.
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sse_starlette.sse import EventSourceResponse
 
 from app.core.db import TenantSessionFactory, async_session_factory
-from app.models import ConversationChannel, Message, MessageRole, Organization
+from app.models import ApiKey, ApiKeyKind, ConversationChannel, Message, MessageRole, Organization
 from app.routers.chat import (
     get_chat_cache,
     get_chat_checkpointer,
@@ -21,6 +20,7 @@ from app.routers.chat import (
 )
 from app.routers.deps import AppSessionFactoryDep
 from app.schemas.widget import WidgetChatRequest, WidgetConfig, WidgetFeedbackRequest
+from app.services import api_keys as api_keys_service
 from app.services.cache import ResponseCache
 from app.services.llm import LLMGateway
 from app.services.rate_limit import RateLimiter
@@ -31,8 +31,8 @@ WIDGET_RATE_LIMIT_PER_MINUTE = 30
 
 
 def get_widget_sessionmaker() -> async_sessionmaker[AsyncSession]:
-    """Identity session: the public-key -> org lookup reads ``organizations``,
-    which has no RLS and is not granted to the app role."""
+    """Identity session: the key -> org lookup reads ``api_keys``/``organizations``,
+    which have no RLS and are not granted to the app role."""
     return async_session_factory
 
 
@@ -46,16 +46,23 @@ def get_widget_rate_limiter(request: Request) -> RateLimiter | None:
 
 async def _org_for_key(
     sessionmaker: async_sessionmaker[AsyncSession], public_key: str | None
-) -> Organization:
+) -> tuple[Organization, ApiKey]:
+    """Resolve the ``X-Public-Key`` header to its org, recording the usage.
+
+    Revoked keys do not resolve, and nothing caches this lookup, so revoking a
+    key takes effect on the very next request.
+    """
     if not public_key:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="missing public key")
     async with sessionmaker() as session:
-        org = await session.scalar(
-            select(Organization).where(Organization.public_key == public_key)
-        )
-    if org is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid public key")
-    return org
+        key = await api_keys_service.resolve_key(session, public_key)
+        if key is None or key.kind != ApiKeyKind.public:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid public key"
+            )
+        org = key.organization
+        await api_keys_service.touch_last_used(session, key)
+    return org, key
 
 
 def _check_origin(org: Organization, origin: str | None) -> None:
@@ -66,13 +73,11 @@ def _check_origin(org: Organization, origin: str | None) -> None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="origin not allowed")
 
 
-async def _enforce_rate_limit(
-    limiter: RateLimiter | None, org: Organization, request: Request
-) -> None:
+async def _enforce_rate_limit(limiter: RateLimiter | None, key: ApiKey, request: Request) -> None:
     if limiter is None:
         return
     ip = request.client.host if request.client else "unknown"
-    for identifier in (f"key:{org.public_key}", f"ip:{ip}"):
+    for identifier in (f"key:{key.id}", f"ip:{ip}"):
         result = await limiter.hit(identifier)
         if not result.allowed:
             raise HTTPException(
@@ -94,9 +99,9 @@ async def widget_config(
     x_public_key: Annotated[str | None, Header()] = None,
     origin: Annotated[str | None, Header()] = None,
 ) -> WidgetConfig:
-    org = await _org_for_key(sessionmaker, x_public_key)
+    org, key = await _org_for_key(sessionmaker, x_public_key)
     _check_origin(org, origin)
-    await _enforce_rate_limit(limiter, org, request)
+    await _enforce_rate_limit(limiter, key, request)
     return WidgetConfig(
         org_name=org.name,
         welcome_message=org.widget_welcome_message,
@@ -116,9 +121,9 @@ async def widget_chat(
     x_public_key: Annotated[str | None, Header()] = None,
     origin: Annotated[str | None, Header()] = None,
 ) -> EventSourceResponse:
-    org = await _org_for_key(sessionmaker, x_public_key)
+    org, key = await _org_for_key(sessionmaker, x_public_key)
     _check_origin(org, origin)
-    await _enforce_rate_limit(limiter, org, request)
+    await _enforce_rate_limit(limiter, key, request)
 
     checkpointer = get_chat_checkpointer(request)
     return await run_chat_stream(
@@ -145,9 +150,9 @@ async def widget_feedback(
     x_public_key: Annotated[str | None, Header()] = None,
     origin: Annotated[str | None, Header()] = None,
 ) -> None:
-    org = await _org_for_key(sessionmaker, x_public_key)
+    org, key = await _org_for_key(sessionmaker, x_public_key)
     _check_origin(org, origin)
-    await _enforce_rate_limit(limiter, org, request)
+    await _enforce_rate_limit(limiter, key, request)
 
     db = TenantSessionFactory(org.id, session_factory=app_session_factory)
     async with db() as session:

@@ -15,6 +15,8 @@ from app.models.knowledge import (
     DocumentStatus,
 )
 from app.models.tenancy import (
+    ApiKey,
+    ApiKeyKind,
     Invitation,
     Membership,
     MembershipRole,
@@ -23,6 +25,8 @@ from app.models.tenancy import (
 )
 
 __all__ = [
+    "ApiKey",
+    "ApiKeyKind",
     "Base",
     "Chunk",
     "Conversation",

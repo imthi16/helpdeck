@@ -15,6 +15,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { embedSnippet, fetchWidgetKey } from "@/lib/api-keys";
 import { streamChat, type Citation } from "@/lib/chat";
 import { addText } from "@/lib/documents";
 import { completeOnboarding, useSession } from "@/lib/session";
@@ -37,6 +38,7 @@ export default function OnboardingPage() {
   const [answer, setAnswer] = useState("");
   const [citations, setCitations] = useState<Citation[]>([]);
   const [busy, setBusy] = useState(false);
+  const [publicKey, setPublicKey] = useState<string | null>(null);
   const nameInitialized = useRef(false);
 
   // Prefill the org name once the session loads.
@@ -50,6 +52,21 @@ export default function OnboardingPage() {
       router.replace("/dashboard");
     }
   }, [user, loading, router]);
+
+  // The snippet needs the org's real widget key, not a placeholder.
+  useEffect(() => {
+    let active = true;
+    fetchWidgetKey()
+      .then((key) => {
+        if (active) setPublicKey(key.value);
+      })
+      .catch(() => {
+        if (active) setPublicKey(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   async function addFirstDoc() {
     setBusy(true);
@@ -89,8 +106,7 @@ export default function OnboardingPage() {
     }
   }
 
-  const publicKey = orgId ? `pk_${orgId.replace(/-/g, "").slice(0, 24)}` : "pk_your_key";
-  const snippet = `<script src="https://cdn.helpdeck.example/helpdeck.js" data-public-key="${publicKey}" defer></script>`;
+  const snippet = embedSnippet(publicKey ?? "pk_your_key");
 
   return (
     <main className="flex min-h-screen items-center justify-center p-6">

@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.main import app
 from app.models import (
+    ApiKeyKind,
     Conversation,
     ConversationChannel,
     Message,
@@ -14,6 +15,7 @@ from app.models import (
 )
 from app.routers.deps import get_app_session_factory
 from app.routers.widget import get_widget_rate_limiter, get_widget_sessionmaker
+from app.services.api_keys import create_key
 from app.services.cache import get_redis
 from app.services.rate_limit import RateLimiter
 
@@ -31,16 +33,19 @@ def overrides(db_sessionmaker: Sessionmaker, app_sessionmaker: Sessionmaker):
 
 
 async def _make_org(sm: Sessionmaker, *, public_key: str, allowed_origins: str = "") -> uuid.UUID:
+    """An org plus the api_keys row the widget authenticates against (5.3)."""
     async with sm() as session:
         org = Organization(
             name="Widget Org",
-            public_key=public_key,
             widget_allowed_origins=allowed_origins,
             widget_welcome_message="Hey there!",
             widget_color="#123456",
         )
         session.add(org)
-        await session.commit()
+        await session.flush()
+        await create_key(
+            session, org_id=org.id, kind=ApiKeyKind.public, name="Widget key", raw=public_key
+        )
         return org.id
 
 

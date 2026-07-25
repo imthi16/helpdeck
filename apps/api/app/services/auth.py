@@ -7,11 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.security import hash_password, verify_password
-from app.models import Membership, MembershipRole, Organization, User
-from app.models.tenancy import generate_public_key
+from app.models import ApiKeyKind, Membership, MembershipRole, Organization, User
 from app.schemas.auth import OrgMembership, UserResponse
-
-__all__ = ["generate_public_key"]
+from app.services.api_keys import create_key
 
 
 class AuthError(Exception):
@@ -40,10 +38,14 @@ async def signup(
         raise EmailAlreadyExists(normalized)
 
     user = User(email=normalized, password_hash=hash_password(password), name=name)
-    org = Organization(name=org_name, public_key=generate_public_key())
+    org = Organization(name=org_name)
     session.add_all([user, org])
     await session.flush()
     session.add(Membership(org_id=org.id, user_id=user.id, role=MembershipRole.owner))
+    # Every org starts with a widget key, so the embed snippet is real from day one.
+    await create_key(
+        session, org_id=org.id, kind=ApiKeyKind.public, name="Widget key", commit=False
+    )
     await session.commit()
     await session.refresh(user)
     return user

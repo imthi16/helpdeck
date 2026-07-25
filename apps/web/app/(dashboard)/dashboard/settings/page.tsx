@@ -28,6 +28,14 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
+  createApiKey,
+  embedSnippet,
+  fetchWidgetKey,
+  listApiKeys,
+  revokeApiKey,
+  type ApiKey,
+} from "@/lib/api-keys";
+import {
   ADMIN_ROLES,
   ROLE_HELP,
   changeMemberRole,
@@ -401,6 +409,246 @@ function MembersTab({ myRole, myUserId }: { myRole: Role; myUserId: string }) {
   );
 }
 
+function ApiKeysTab({ myRole }: { myRole: Role }) {
+  const canManage = ADMIN_ROLES.includes(myRole);
+  const isOwner = myRole === "owner";
+  const [keys, setKeys] = useState<ApiKey[]>([]);
+  const [widgetKey, setWidgetKey] = useState<ApiKey | null>(null);
+  const [freshSecret, setFreshSecret] = useState<string | null>(null);
+  const [name, setName] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [pendingRevoke, setPendingRevoke] = useState<ApiKey | null>(null);
+
+  // Widget key first, then the list: fetching the widget key re-issues one when
+  // the previous was revoked, and the list must include that new row.
+  const load = useCallback(async () => {
+    const nextWidget = await fetchWidgetKey();
+    const nextKeys = await listApiKeys();
+    return { nextWidget, nextKeys };
+  }, []);
+
+  const refresh = useCallback(async () => {
+    try {
+      const { nextWidget, nextKeys } = await load();
+      setWidgetKey(nextWidget);
+      setKeys(nextKeys);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load API keys");
+    }
+  }, [load]);
+
+  useEffect(() => {
+    let active = true;
+    load()
+      .then(({ nextWidget, nextKeys }) => {
+        if (!active) return;
+        setWidgetKey(nextWidget);
+        setKeys(nextKeys);
+      })
+      .catch((err) => {
+        if (active) setError(err instanceof Error ? err.message : "Failed to load API keys");
+      });
+    return () => {
+      active = false;
+    };
+  }, [load]);
+
+  async function run(action: () => Promise<unknown>) {
+    setError(null);
+    try {
+      await action();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong");
+    } finally {
+      await refresh();
+    }
+  }
+
+  async function onCreateSecret(event: React.FormEvent) {
+    event.preventDefault();
+    setFreshSecret(null);
+    await run(async () => {
+      const created = await createApiKey("secret", name.trim());
+      setFreshSecret(created.secret ?? null);
+      setName("");
+    });
+  }
+
+  return (
+    <div className="flex flex-col gap-6">
+      {error && (
+        <p role="alert" className="text-sm text-red-600" data-testid="keys-error">
+          {error}
+        </p>
+      )}
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Widget embed snippet</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {widgetKey?.value ? (
+            <>
+              <div className="flex flex-wrap items-center gap-2">
+                <code
+                  className="flex-1 overflow-x-auto rounded bg-muted/60 px-2 py-1 text-xs"
+                  data-testid="embed-snippet"
+                >
+                  {embedSnippet(widgetKey.value)}
+                </code>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void navigator.clipboard.writeText(embedSnippet(widgetKey.value!))}
+                >
+                  Copy
+                </Button>
+              </div>
+              <p className="mt-2 text-sm text-muted-foreground">
+                The public key identifies your organization and is safe to ship in page HTML.
+                Revoke it below to rotate — a new one is issued automatically.
+              </p>
+            </>
+          ) : (
+            <p className="text-sm text-muted-foreground">No widget key yet.</p>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Create a secret key</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form className="flex flex-wrap items-end gap-2" onSubmit={onCreateSecret}>
+            <div className="min-w-56 flex-1">
+              <Label htmlFor="key-name">Name</Label>
+              <Input
+                id="key-name"
+                required
+                disabled={!isOwner}
+                placeholder="CI pipeline"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                data-testid="key-name"
+              />
+            </div>
+            <Button type="submit" disabled={!isOwner} data-testid="key-create">
+              Create secret key
+            </Button>
+          </form>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Secret keys are for future server-to-server use — no endpoint accepts one yet.
+            {!isOwner && " Only owners can issue them."}
+          </p>
+          {freshSecret && (
+            <div className="mt-4 rounded-md border bg-muted/40 p-3">
+              <p className="mb-2 text-sm text-muted-foreground">
+                Copy this now — it is shown once and cannot be retrieved again.
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <code
+                  className="flex-1 overflow-x-auto rounded bg-background px-2 py-1 text-xs"
+                  data-testid="fresh-secret"
+                >
+                  {freshSecret}
+                </code>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void navigator.clipboard.writeText(freshSecret)}
+                >
+                  Copy
+                </Button>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Keys</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Kind</TableHead>
+                <TableHead>Prefix</TableHead>
+                <TableHead>Last used</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {keys.map((key) => (
+                <TableRow key={key.id} data-testid="key-row" data-prefix={key.prefix}>
+                  <TableCell className="font-medium">
+                    {key.name}
+                    {key.revoked_at && (
+                      <Badge variant="destructive" className="ml-2">
+                        revoked
+                      </Badge>
+                    )}
+                  </TableCell>
+                  <TableCell>{key.kind}</TableCell>
+                  <TableCell className="font-mono text-xs">{key.prefix}…</TableCell>
+                  <TableCell data-testid="key-last-used">
+                    {key.last_used_at ? new Date(key.last_used_at).toLocaleString() : "never"}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={
+                        !canManage || key.revoked_at !== null || (key.kind === "secret" && !isOwner)
+                      }
+                      onClick={() => setPendingRevoke(key)}
+                      data-testid="key-revoke"
+                    >
+                      Revoke
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      <AlertDialog
+        open={pendingRevoke !== null}
+        onOpenChange={(open) => !open && setPendingRevoke(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Revoke this key?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingRevoke?.kind === "public"
+                ? "Any site using this widget key stops working immediately. A new widget key is issued automatically."
+                : "Anything using this secret key stops working immediately."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              data-testid="confirm-revoke"
+              onClick={() => {
+                const key = pendingRevoke;
+                setPendingRevoke(null);
+                if (key) void run(() => revokeApiKey(key.id));
+              }}
+            >
+              Revoke
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   const { user, refresh } = useSession();
   const membership = user?.memberships[0];
@@ -409,13 +657,17 @@ export default function SettingsPage() {
     return <PageHeader title="Settings" description="Organization, members, and API keys." />;
   }
 
+  const canSeeKeys = ADMIN_ROLES.includes(membership.role);
+
   return (
     <div className="mx-auto max-w-4xl">
-      <PageHeader title="Settings" description="Organization and members." />
+      <PageHeader title="Settings" description="Organization, members, and API keys." />
       <Tabs defaultValue="organization">
         <TabsList>
           <TabsTrigger value="organization">Organization</TabsTrigger>
           <TabsTrigger value="members">Members</TabsTrigger>
+          {/* Keys are admin+ even to read, so the tab is hidden for others. */}
+          {canSeeKeys && <TabsTrigger value="keys">API keys</TabsTrigger>}
         </TabsList>
         <TabsContent value="organization" className="pt-4">
           <OrganizationTab
@@ -427,6 +679,11 @@ export default function SettingsPage() {
         <TabsContent value="members" className="pt-4">
           <MembersTab myRole={membership.role} myUserId={user.id} />
         </TabsContent>
+        {canSeeKeys && (
+          <TabsContent value="keys" className="pt-4">
+            <ApiKeysTab myRole={membership.role} />
+          </TabsContent>
+        )}
       </Tabs>
     </div>
   );

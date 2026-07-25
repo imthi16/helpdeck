@@ -13,7 +13,15 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models import Chunk, Document, DocumentSourceType, DocumentStatus, Organization
+from app.models import (
+    ApiKeyKind,
+    Chunk,
+    Document,
+    DocumentSourceType,
+    DocumentStatus,
+    Organization,
+)
+from app.services.api_keys import create_key
 from app.services.embeddings import EmbeddingService
 from app.services.ingestion.pipeline import run_ingestion
 from app.services.storage import ContentStorage, document_key
@@ -44,10 +52,17 @@ async def _reset_org(
             await session.delete(org)  # cascade removes documents + chunks
         await session.flush()
         org = Organization(name=name)
-        if public_key is not None:
-            org.public_key = public_key
         session.add(org)
-        await session.commit()
+        await session.flush()
+        # Seeded orgs get a widget key too; a fixed value keeps the widget E2E
+        # and local demo pages pointing at a known key.
+        await create_key(
+            session,
+            org_id=org.id,
+            kind=ApiKeyKind.public,
+            name="Widget key",
+            raw=public_key,
+        )
         return org.id
 
 

@@ -165,3 +165,50 @@ Redemption rules (`POST /auth/invites/{token}/accept`):
 
 Re-inviting the same email replaces the pending invite (rotating the token), enforced by a
 partial unique index on `(org_id, email) WHERE accepted_at IS NULL`.
+
+## Phase 5.3 — API keys
+
+The widget used to authenticate with one immutable string on the org row
+(`organizations.public_key`): unrotatable, unrevocable, unnamed, with no usage record. That
+column is gone; `api_keys` is now the single source of truth. The migration
+(`fb3542d2ad85`) carries every org's existing value over verbatim, so snippets already
+embedded in customer pages keep working, and `downgrade()` restores the column from the
+public rows.
+
+### Two kinds, one lookup path
+
+| | public (`pk_…`) | secret (`sk_…`) |
+|---|---|---|
+| Purpose | widget, in a browser | future server-to-server |
+| Stored | plaintext `value` **and** `key_hash` | `key_hash` only, `value` NULL |
+| Retrievable later | yes — the embed snippet needs it | no, shown once at creation |
+
+Authentication always resolves by SHA-256 hash (`resolve_key`), so no code path compares a
+raw secret. Public keys keep their plaintext because they are *not* secrets — they ship
+inside page HTML — and the dashboard has to render them; treating them as secret would buy
+nothing and break the snippet.
+
+**Secret keys are inert.** Nothing accepts one yet — they exist so the create/reveal-once/
+revoke flow and storage are in place for a later server-to-server surface. The UI says so
+too, to avoid implying working auth.
+
+**No RLS on `api_keys`**, same rationale as `users`/`memberships`/`invitations`: the widget
+resolves a key to an org before any tenant context exists. Identity session only, not
+granted to `helpdeck_app`.
+
+### Revocation and usage
+
+`resolve_key` filters on `revoked_at IS NULL` and nothing caches it, so a revoked key 401s
+on the very next request — that is the 5.3 Verify (`tests/test_api_keys.py`). Revoked keys
+are kept and shown as revoked rather than deleted, so the history stays legible. Revoking
+the *widget* key is the rotation path: `GET /api/v1/keys/widget` issues a fresh one when
+none is active, so a site owner can rotate without an outage window.
+
+`last_used_at` is written at most once per minute per key (`LAST_USED_THROTTLE`) — without
+the throttle every widget request would carry a write.
+
+### Who may do what
+
+Keys are a security surface, so unlike the members roster even *reading* them is admin+:
+agent and viewer get 403 and the Settings tab is hidden for them. Issuing or revoking a
+**secret** key is owner-only; admins manage public keys.
