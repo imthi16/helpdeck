@@ -108,3 +108,60 @@ and the explicit `org_id` filters are defense-in-depth rather than the only defe
 - **LangGraph Postgres checkpointer** — GitHub issue #64. Its tables are
   library-managed and not granted to the app role.
 - Migrations, `scripts/seed*.py`, and test setup/teardown, as before.
+
+## Phase 5.2 — RBAC enforcement and members management
+
+RLS (5.1) keeps other tenants out; RBAC governs what a member *inside* the tenant may do.
+Before this, roles existed in the data model but nothing read them: any member could
+delete the knowledge base or rename the org.
+
+### The permission model
+
+`require_role(...)` in `app/routers/deps.py` is a dependency factory over
+`current_membership` (the caller's membership in their active org). Reads are open to all
+four roles — a viewer is read-only, not blind — so only write routes carry a role
+dependency:
+
+| Action | owner | admin | agent | viewer |
+|---|---|---|---|---|
+| Read documents, conversations, members, invites | ✅ | ✅ | ✅ | ✅ |
+| Knowledge base writes (create/upload/reindex/delete) | ✅ | ✅ | ❌ | ❌ |
+| Resolve / reply on conversations | ✅ | ✅ | ✅ | ❌ |
+| Playground chat (`POST /api/v1/chat`) | ✅ | ✅ | ✅ | ❌ |
+| Org settings (`/onboarding/complete`) | ✅ | ✅ | ❌ | ❌ |
+| Invite / revoke / change role / remove member | ✅ | ✅ | ❌ | ❌ |
+| Grant or revoke the **owner** role | ✅ | ❌ | ❌ | ❌ |
+
+Two invariants live in `app/services/members.py`, not in the dependency, so they hold for
+every caller: an org always keeps at least one owner (409 otherwise), and only an owner
+moves ownership. `tests/test_rbac.py` is the 5.2 Verify — a 70-case matrix of every role
+against every sensitive endpoint.
+
+### Chat endpoint auth (a hole this task closed)
+
+`POST /api/v1/chat` previously took `org_id` from the request body with **no session at
+all**: anyone could chat against any org's knowledge base. It now requires a member
+session, 403s when the body's `org_id` is not the caller's, and derives the tenant scope
+from the membership rather than the request. The widget path is unchanged — it
+authenticates with the org's public key.
+
+### Invitations
+
+`invitations` stores a SHA-256 hash of a single-use token; the raw token exists only in
+the returned link. There is no mailer yet, so `POST /api/v1/members/invites` returns the
+`/invite/<token>` URL for the inviter to share (built from `WEB_APP_URL`) and logs the
+invite *without* the token. A real mailer drops in behind the same endpoint.
+
+**No RLS on `invitations`**, for the same reason as `users`/`memberships`: redeeming a
+token is a cross-tenant lookup made before any org context exists. It is reached through
+the identity session and is not granted to the `helpdeck_app` role.
+
+Redemption rules (`POST /auth/invites/{token}/accept`):
+
+- signed in as the invited email → membership added;
+- no account for that email → the password in the request creates it and signs in;
+- an account exists but is not signed in → 403. Holding the link never bypasses an
+  existing account's password.
+
+Re-inviting the same email replaces the pending invite (rotating the token), enforced by a
+partial unique index on `(org_id, email) WHERE accepted_at IS NULL`.

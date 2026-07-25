@@ -3,7 +3,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,7 +16,7 @@ from app.models import (
     Message,
     MessageRole,
 )
-from app.routers.deps import OrgDep, TenantDbDep
+from app.routers.deps import AGENT_ROLES, OrgDep, TenantDbDep, require_role
 from app.schemas.conversation import (
     ConversationDetail,
     ConversationSummary,
@@ -129,7 +129,11 @@ async def get_conversation(
     )
 
 
-@router.post("/{conversation_id}/resolve", response_model=ConversationDetail)
+@router.post(
+    "/{conversation_id}/resolve",
+    response_model=ConversationDetail,
+    dependencies=[Depends(require_role(*AGENT_ROLES))],
+)
 async def resolve_conversation(
     conversation_id: uuid.UUID, db: TenantDbDep, org_id: OrgDep
 ) -> ConversationDetail:
@@ -153,7 +157,11 @@ async def resolve_conversation(
     return await get_conversation(conversation_id, db, org_id)
 
 
-@router.post("/{conversation_id}/reply", response_model=ConversationDetail)
+@router.post(
+    "/{conversation_id}/reply",
+    response_model=ConversationDetail,
+    dependencies=[Depends(require_role(*AGENT_ROLES))],
+)
 async def reply_to_conversation(
     conversation_id: uuid.UUID,
     payload: ReplyRequest,

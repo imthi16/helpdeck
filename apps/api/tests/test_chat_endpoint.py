@@ -9,8 +9,10 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.security import hash_password
 from app.main import app
-from app.models import Message, MessageRole, Organization
+from app.models import Membership, MembershipRole, Message, MessageRole, Organization, User
+from app.routers.auth import get_auth_sessionmaker
 from app.routers.chat import get_chat_cache, get_chat_gateway
 from app.routers.deps import get_app_session_factory
 from app.services.cache import ResponseCache, get_redis
@@ -77,6 +79,33 @@ async def seeded(db_sessionmaker: Sessionmaker, tmp_path: Path):
                 await session.commit()
 
 
+@pytest.fixture
+async def member_client(db_sessionmaker: Sessionmaker, seeded: uuid.UUID):
+    """A signed-in member of the seeded org (the playground requires one)."""
+    email = f"chat-member-{uuid.uuid4().hex[:8]}@example.com"
+    password = "hunter2pw"
+    async with db_sessionmaker() as session:
+        user = User(email=email, password_hash=hash_password(password), name="Chat")
+        session.add(user)
+        await session.flush()
+        session.add(Membership(org_id=seeded, user_id=user.id, role=MembershipRole.admin))
+        await session.commit()
+
+    app.dependency_overrides[get_auth_sessionmaker] = lambda: db_sessionmaker
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    resp = await client.post("/auth/login", json={"email": email, "password": password})
+    assert resp.status_code == 200, resp.text
+    try:
+        yield client
+    finally:
+        await client.aclose()
+        async with db_sessionmaker() as session:
+            row = await session.scalar(select(User).where(User.email == email))
+            if row is not None:
+                await session.delete(row)
+                await session.commit()
+
+
 def _parse_sse(raw: str) -> list[tuple[str, dict]]:
     events: list[tuple[str, dict]] = []
     normalized = raw.replace("\r\n", "\n")
@@ -112,7 +141,10 @@ async def _messages(sm: Sessionmaker, conversation_id: uuid.UUID) -> list[Messag
 
 
 async def test_chat_streams_events_ending_in_done(
-    db_sessionmaker: Sessionmaker, app_sessionmaker: Sessionmaker, seeded: uuid.UUID
+    db_sessionmaker: Sessionmaker,
+    app_sessionmaker: Sessionmaker,
+    seeded: uuid.UUID,
+    member_client: httpx.AsyncClient,
 ) -> None:
     org_id = seeded
     app.dependency_overrides[get_app_session_factory] = lambda: app_sessionmaker
@@ -120,15 +152,13 @@ async def test_chat_streams_events_ending_in_done(
         OfflineGroundedProvider(), cheap_model="c", strong_model="s"
     )
     try:
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            response = await client.post(
-                "/api/v1/chat",
-                json={
-                    "org_id": str(org_id),
-                    "message": "How often should I descale my espresso machine?",
-                },
-            )
+        response = await member_client.post(
+            "/api/v1/chat",
+            json={
+                "org_id": str(org_id),
+                "message": "How often should I descale my espresso machine?",
+            },
+        )
         assert response.status_code == 200
         events = _parse_sse(response.text)
         names = [name for name, _ in events]
@@ -150,7 +180,10 @@ async def test_chat_streams_events_ending_in_done(
 
 
 async def test_identical_query_served_from_cache_without_llm_call(
-    db_sessionmaker: Sessionmaker, app_sessionmaker: Sessionmaker, seeded: uuid.UUID
+    db_sessionmaker: Sessionmaker,
+    app_sessionmaker: Sessionmaker,
+    seeded: uuid.UUID,
+    member_client: httpx.AsyncClient,
 ) -> None:
     org_id = seeded
     provider = CountingProvider()
@@ -164,38 +197,39 @@ async def test_identical_query_served_from_cache_without_llm_call(
         "message": "How often should I descale my espresso machine?",
     }
     try:
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            first = await client.post("/api/v1/chat", json=body)
-            assert first.headers["X-HelpDeck-Cache"] == "miss"
-            first_events = _parse_sse(first.text)
-            assert first_events[-1][1]["cached"] is False
-            calls_after_first = provider.calls
-            assert calls_after_first > 0
+        first = await member_client.post("/api/v1/chat", json=body)
+        assert first.headers["X-HelpDeck-Cache"] == "miss"
+        first_events = _parse_sse(first.text)
+        assert first_events[-1][1]["cached"] is False
+        calls_after_first = provider.calls
+        assert calls_after_first > 0
 
-            second = await client.post("/api/v1/chat", json=body)
-            assert second.headers["X-HelpDeck-Cache"] == "hit"
-            second_events = _parse_sse(second.text)
-            assert second_events[-1][0] == "done"
-            assert second_events[-1][1]["cached"] is True
-            # No further LLM calls on the cached path.
-            assert provider.calls == calls_after_first
+        second = await member_client.post("/api/v1/chat", json=body)
+        assert second.headers["X-HelpDeck-Cache"] == "hit"
+        second_events = _parse_sse(second.text)
+        assert second_events[-1][0] == "done"
+        assert second_events[-1][1]["cached"] is True
+        # No further LLM calls on the cached path.
+        assert provider.calls == calls_after_first
 
-            # Cache still returns the answer body and any citations.
-            token_events = [p for name, p in second_events if name == "token"]
-            assert token_events
+        # Cache still returns the answer body and any citations.
+        token_events = [p for name, p in second_events if name == "token"]
+        assert token_events
 
-            # Bypass flag forces a live run (and another LLM call).
-            third = await client.post("/api/v1/chat", json={**body, "bypass_cache": True})
-            assert third.headers["X-HelpDeck-Cache"] == "miss"
-            assert provider.calls > calls_after_first
+        # Bypass flag forces a live run (and another LLM call).
+        third = await member_client.post("/api/v1/chat", json={**body, "bypass_cache": True})
+        assert third.headers["X-HelpDeck-Cache"] == "miss"
+        assert provider.calls > calls_after_first
     finally:
         app.dependency_overrides.clear()
         await redis_client.aclose()
 
 
 async def test_disconnect_midstream_leaves_no_assistant_message(
-    db_sessionmaker: Sessionmaker, app_sessionmaker: Sessionmaker, seeded: uuid.UUID
+    db_sessionmaker: Sessionmaker,
+    app_sessionmaker: Sessionmaker,
+    seeded: uuid.UUID,
+    member_client: httpx.AsyncClient,
 ) -> None:
     org_id = seeded
     app.dependency_overrides[get_app_session_factory] = lambda: app_sessionmaker
@@ -203,25 +237,23 @@ async def test_disconnect_midstream_leaves_no_assistant_message(
         SlowOfflineProvider(delay=0.05), cheap_model="c", strong_model="s"
     )
     try:
-        transport = httpx.ASGITransport(app=app)
         conversation_id: uuid.UUID | None = None
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            async with client.stream(
-                "POST",
-                "/api/v1/chat",
-                json={
-                    "org_id": str(org_id),
-                    "message": "How often should I descale my espresso machine?",
-                },
-            ) as response:
-                async for line in response.aiter_lines():
-                    if line.startswith("data:"):
-                        payload = json.loads(line[len("data:") :].strip())
-                        if "conversation_id" in payload:
-                            conversation_id = uuid.UUID(payload["conversation_id"])
-                        # Disconnect after the first streamed token.
-                        if "text" in payload:
-                            break
+        async with member_client.stream(
+            "POST",
+            "/api/v1/chat",
+            json={
+                "org_id": str(org_id),
+                "message": "How often should I descale my espresso machine?",
+            },
+        ) as response:
+            async for line in response.aiter_lines():
+                if line.startswith("data:"):
+                    payload = json.loads(line[len("data:") :].strip())
+                    if "conversation_id" in payload:
+                        conversation_id = uuid.UUID(payload["conversation_id"])
+                    # Disconnect after the first streamed token.
+                    if "text" in payload:
+                        break
         # Give the server task a moment to observe the cancellation.
         await asyncio.sleep(0.2)
 

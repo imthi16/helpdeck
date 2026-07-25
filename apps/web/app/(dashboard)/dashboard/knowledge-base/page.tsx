@@ -33,6 +33,8 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { ADMIN_ROLES } from "@/lib/members";
+import { useSession } from "@/lib/session";
 import {
   addText,
   addUrl,
@@ -59,11 +61,18 @@ function StatusBadge({ status }: { status: DocumentStatus }) {
   );
 }
 
-function UploadZone({ onUpload }: { onUpload: (file: File) => Promise<void> }) {
+function UploadZone({
+  onUpload,
+  disabled,
+}: {
+  onUpload: (file: File) => Promise<void>;
+  disabled?: boolean;
+}) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
 
   async function handleFiles(files: FileList | null) {
+    if (disabled) return;
     const file = files?.[0];
     if (file) await onUpload(file);
   }
@@ -103,6 +112,9 @@ function UploadZone({ onUpload }: { onUpload: (file: File) => Promise<void> }) {
 }
 
 export default function KnowledgeBasePage() {
+  const { user } = useSession();
+  // Managing sources is admin+ work; agents and viewers get a read-only view.
+  const canEdit = ADMIN_ROLES.includes(user?.memberships[0]?.role ?? "viewer");
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [url, setUrl] = useState("");
@@ -167,7 +179,7 @@ export default function KnowledgeBasePage() {
               <TabsTrigger value="text">Paste text</TabsTrigger>
             </TabsList>
             <TabsContent value="pdf" className="pt-4">
-              <UploadZone onUpload={(file) => run(() => uploadPdf(file))} />
+              <UploadZone onUpload={(file) => run(() => uploadPdf(file))} disabled={!canEdit} />
             </TabsContent>
             <TabsContent value="url" className="pt-4">
               <form
@@ -189,9 +201,12 @@ export default function KnowledgeBasePage() {
                     placeholder="https://docs.example.com/faq"
                     value={url}
                     onChange={(e) => setUrl(e.target.value)}
+                    disabled={!canEdit}
                   />
                 </div>
-                <Button type="submit">Add</Button>
+                <Button type="submit" disabled={!canEdit}>
+                  Add
+                </Button>
               </form>
             </TabsContent>
             <TabsContent value="text" className="pt-4">
@@ -212,6 +227,7 @@ export default function KnowledgeBasePage() {
                   required
                   value={textTitle}
                   onChange={(e) => setTextTitle(e.target.value)}
+                  disabled={!canEdit}
                 />
                 <Label htmlFor="text-body">Content</Label>
                 <Textarea
@@ -220,13 +236,19 @@ export default function KnowledgeBasePage() {
                   rows={5}
                   value={textBody}
                   onChange={(e) => setTextBody(e.target.value)}
+                  disabled={!canEdit}
                 />
-                <Button type="submit" className="self-start">
+                <Button type="submit" className="self-start" disabled={!canEdit}>
                   Add text
                 </Button>
               </form>
             </TabsContent>
           </Tabs>
+          {!canEdit && (
+            <p className="mt-3 text-sm text-muted-foreground">
+              Only owners and admins can add or remove sources.
+            </p>
+          )}
         </CardContent>
       </Card>
 
@@ -273,6 +295,7 @@ export default function KnowledgeBasePage() {
                       <Button
                         variant="outline"
                         size="sm"
+                        disabled={!canEdit}
                         onClick={() => run(() => reindexDocument(doc.id))}
                       >
                         Re-index
@@ -281,6 +304,7 @@ export default function KnowledgeBasePage() {
                         variant="destructive"
                         size="sm"
                         data-testid="doc-delete"
+                        disabled={!canEdit}
                         onClick={() => setPendingDelete(doc)}
                       >
                         Delete

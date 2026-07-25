@@ -1,16 +1,29 @@
+import datetime as dt
 import enum
+import hashlib
 import secrets
 import uuid
 
-from sqlalchemy import Boolean, Enum, ForeignKey, String, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Index, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
+INVITE_TTL_DAYS = 7
+
 
 def generate_public_key() -> str:
     return f"pk_{secrets.token_urlsafe(24)}"
+
+
+def generate_invite_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def hash_invite_token(token: str) -> str:
+    """Invites are stored hashed: the raw token only ever exists in the link."""
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
 class MembershipRole(enum.StrEnum):
@@ -78,3 +91,44 @@ class Membership(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     organization: Mapped["Organization"] = relationship(back_populates="memberships")
     user: Mapped["User"] = relationship(back_populates="memberships")
+
+
+class Invitation(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """A pending invite to join an org, redeemed with a single-use token.
+
+    Deliberately NOT under RLS (like ``users``/``memberships``): redeeming a token
+    is a cross-tenant lookup that happens before any org context exists, so this
+    table is reached through the identity session and is not granted to the app
+    role. See docs/NOTES.md.
+    """
+
+    __tablename__ = "invitations"
+    __table_args__ = (
+        # One live invite per email per org; accepted ones are kept for history.
+        Index(
+            "uq_invitations_org_email_pending",
+            "org_id",
+            "email",
+            unique=True,
+            postgresql_where="accepted_at IS NULL",
+        ),
+    )
+
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    email: Mapped[str] = mapped_column(String(320), nullable=False)
+    role: Mapped[MembershipRole] = mapped_column(
+        Enum(MembershipRole, name="membership_role"), nullable=False
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    invited_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    expires_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    accepted_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    organization: Mapped["Organization"] = relationship()

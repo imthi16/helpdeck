@@ -14,6 +14,8 @@ from app.core.security import (
     decode_token,
 )
 from app.schemas.auth import LoginRequest, SignupRequest, UserResponse
+from app.schemas.member import AcceptInviteRequest, InvitePreview
+from app.services import members as members_service
 from app.services.auth import (
     EmailAlreadyExists,
     InvalidCredentials,
@@ -162,3 +164,73 @@ async def me_endpoint(
     current_user: Annotated[UserResponse, Depends(get_current_user)],
 ) -> UserResponse:
     return current_user
+
+
+async def _optional_current_user(
+    request: Request,
+    sessionmaker: Annotated[async_sessionmaker[AsyncSession], Depends(get_auth_sessionmaker)],
+) -> UserResponse | None:
+    """The signed-in user if there is one; ``None`` instead of a 401."""
+    try:
+        return await get_current_user(request, sessionmaker)
+    except HTTPException:
+        return None
+
+
+@router.get("/invites/{token}", response_model=InvitePreview)
+async def preview_invite_endpoint(
+    token: str,
+    sessionmaker: Annotated[async_sessionmaker[AsyncSession], Depends(get_auth_sessionmaker)],
+) -> InvitePreview:
+    """What an invite link points at, so the accept page can render itself."""
+    async with sessionmaker() as session:
+        try:
+            invitation = await members_service.preview_invite(session, token)
+        except members_service.InviteInvalid as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        existing = await members_service.find_user_by_email(session, invitation.email)
+        return InvitePreview(
+            org_name=invitation.organization.name,
+            email=invitation.email,
+            role=invitation.role,
+            needs_account=existing is None,
+        )
+
+
+@router.post("/invites/{token}/accept", response_model=UserResponse)
+async def accept_invite_endpoint(
+    token: str,
+    payload: AcceptInviteRequest,
+    response: Response,
+    sessionmaker: Annotated[async_sessionmaker[AsyncSession], Depends(get_auth_sessionmaker)],
+    current_user: Annotated[UserResponse | None, Depends(_optional_current_user)],
+) -> UserResponse:
+    """Redeem an invite.
+
+    Signed in: the session's email must be the invited one. Signed out: a
+    password creates the account for the invited email and signs it in. An
+    existing account must log in first — holding the link never bypasses its
+    password.
+    """
+    async with sessionmaker() as session:
+        try:
+            user = await members_service.accept_invite(
+                session,
+                token=token,
+                user_id=current_user.id if current_user else None,
+                name=payload.name,
+                password=payload.password,
+            )
+        except members_service.InviteEmailMismatch as exc:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"this invite is for {exc}; sign in as that user to accept it",
+            ) from exc
+        except members_service.MemberError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        user_response = await load_user_response(session, user.id)
+
+    assert user_response is not None
+    if current_user is None:
+        _set_auth_cookies(response, create_access_token(user.id), create_refresh_token(user.id))
+    return user_response

@@ -31,6 +31,8 @@ export default defineConfig({
       env: {
         ALLOWED_ORIGINS: WEB_URL,
         STORAGE_DIR: ".e2e-storage",
+        // Invite links must point at the test dashboard, not the dev one.
+        WEB_APP_URL: WEB_URL,
       },
     },
     {

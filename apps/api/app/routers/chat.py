@@ -20,7 +20,7 @@ from app.agent.runner import build_dependencies
 from app.core.db import SessionFactory, TenantSessionFactory
 from app.core.logging import get_logger
 from app.models import Conversation, ConversationChannel, Message, MessageRole
-from app.routers.deps import AppSessionFactoryDep
+from app.routers.deps import AgentDep, AppSessionFactoryDep
 from app.schemas.chat import ChatRequest
 from app.services.cache import CachedAnswer, ResponseCache, compute_kb_version, get_redis
 from app.services.llm import LLMGateway
@@ -296,17 +296,25 @@ async def run_chat_stream(
 @router.post("/chat")
 async def chat(
     request: ChatRequest,
+    membership: AgentDep,
     session_factory: AppSessionFactoryDep,
     checkpointer: Annotated[Any, Depends(get_chat_checkpointer)],
     gateway: Annotated[LLMGateway, Depends(get_chat_gateway)],
     cache: Annotated[ResponseCache, Depends(get_chat_cache)],
 ) -> EventSourceResponse:
+    # The playground is a member-only surface: a session is required, and the
+    # body's org_id may only ever be the caller's own org. The tenant scope comes
+    # from the membership, never from the request.
+    if request.org_id != membership.org_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="org_id is not your organization"
+        )
     return await run_chat_stream(
-        db=TenantSessionFactory(request.org_id, session_factory=session_factory),
+        db=TenantSessionFactory(membership.org_id, session_factory=session_factory),
         gateway=gateway,
         checkpointer=checkpointer,
         cache=cache,
-        org_id=request.org_id,
+        org_id=membership.org_id,
         message=request.message,
         conversation_id=request.conversation_id,
         channel=request.channel,

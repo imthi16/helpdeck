@@ -16,7 +16,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Chunk, Document, DocumentSourceType, DocumentStatus
-from app.routers.deps import OrgDep, TenantDbDep
+from app.routers.deps import ADMIN_ROLES, OrgDep, TenantDbDep, require_role
 from app.schemas.document import DocumentCreate, DocumentResponse
 from app.services.queue import ArqIngestQueue, IngestQueue
 from app.services.storage import ContentStorage, document_key, get_storage
@@ -90,7 +90,12 @@ async def get_document(document_id: uuid.UUID, db: TenantDbDep, org_id: OrgDep) 
     return _to_response(document, count or 0)
 
 
-@router.post("/upload", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/upload",
+    response_model=DocumentResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_role(*ADMIN_ROLES))],
+)
 async def upload_document(
     db: TenantDbDep,
     storage: StorageDep,
@@ -130,7 +135,12 @@ async def upload_document(
         return _to_response(document, 0)
 
 
-@router.post("", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=DocumentResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_role(*ADMIN_ROLES))],
+)
 async def create_document(
     payload: DocumentCreate,
     db: TenantDbDep,
@@ -163,7 +173,11 @@ async def create_document(
         return _to_response(document, 0)
 
 
-@router.post("/{document_id}/reindex", response_model=DocumentResponse)
+@router.post(
+    "/{document_id}/reindex",
+    response_model=DocumentResponse,
+    dependencies=[Depends(require_role(*ADMIN_ROLES))],
+)
 async def reindex_document(
     document_id: uuid.UUID,
     db: TenantDbDep,
@@ -183,7 +197,11 @@ async def reindex_document(
     return _to_response(document, count or 0)
 
 
-@router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{document_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_role(*ADMIN_ROLES))],
+)
 async def delete_document(
     document_id: uuid.UUID,
     db: TenantDbDep,

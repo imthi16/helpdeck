@@ -66,6 +66,10 @@ class Settings(BaseSettings):
 
     allowed_origins: str = "http://localhost:3000"
 
+    # Dashboard base URL, used to build invite links (no mailer yet: the link is
+    # returned to the inviter and logged).
+    web_app_url: str = "http://localhost:3000"
+
 
 @lru_cache
 def get_settings() -> Settings:
