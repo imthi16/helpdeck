@@ -12,6 +12,8 @@ export interface StoredMessage {
 export interface StoredSession {
   conversationId?: string;
   messages: StoredMessage[];
+  /** Set once the visitor rated (or dismissed) this conversation, so we ask once. */
+  rated?: boolean;
 }
 
 const key = (publicKey: string) => `helpdeck:session:${publicKey}`;

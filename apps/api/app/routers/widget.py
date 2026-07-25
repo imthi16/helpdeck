@@ -11,7 +11,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sse_starlette.sse import EventSourceResponse
 
 from app.core.db import TenantSessionFactory, async_session_factory
-from app.models import ApiKey, ApiKeyKind, ConversationChannel, Message, MessageRole, Organization
+from app.models import (
+    ApiKey,
+    ApiKeyKind,
+    Conversation,
+    ConversationChannel,
+    Message,
+    MessageRole,
+    Organization,
+)
 from app.routers.chat import (
     get_chat_cache,
     get_chat_checkpointer,
@@ -19,7 +27,12 @@ from app.routers.chat import (
     run_chat_stream,
 )
 from app.routers.deps import AppSessionFactoryDep
-from app.schemas.widget import WidgetChatRequest, WidgetConfig, WidgetFeedbackRequest
+from app.schemas.widget import (
+    WidgetChatRequest,
+    WidgetConfig,
+    WidgetCsatRequest,
+    WidgetFeedbackRequest,
+)
 from app.services import api_keys as api_keys_service
 from app.services.cache import ResponseCache
 from app.services.llm import LLMGateway
@@ -160,3 +173,34 @@ async def widget_feedback(
         if message is None or message.org_id != org.id or message.role != MessageRole.assistant:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="message not found")
         message.feedback = payload.rating
+
+
+@router.post("/csat", status_code=status.HTTP_204_NO_CONTENT)
+async def widget_csat(
+    payload: WidgetCsatRequest,
+    sessionmaker: SessionmakerDep,
+    app_session_factory: AppSessionFactoryDep,
+    limiter: LimiterDep,
+    request: Request,
+    x_public_key: Annotated[str | None, Header()] = None,
+    origin: Annotated[str | None, Header()] = None,
+) -> None:
+    """Record a 1-5 satisfaction score for one conversation.
+
+    A rating is write-once: re-rating would silently move the org's average, and
+    the widget only asks once per conversation anyway.
+    """
+    org, key = await _org_for_key(sessionmaker, x_public_key)
+    _check_origin(org, origin)
+    await _enforce_rate_limit(limiter, key, request)
+
+    db = TenantSessionFactory(org.id, session_factory=app_session_factory)
+    async with db() as session:
+        conversation = await session.get(Conversation, payload.conversation_id)
+        if conversation is None or conversation.org_id != org.id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="conversation not found"
+            )
+        if conversation.csat_score is not None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="already rated")
+        conversation.csat_score = payload.score

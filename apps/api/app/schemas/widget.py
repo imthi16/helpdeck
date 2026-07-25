@@ -18,3 +18,8 @@ class WidgetChatRequest(BaseModel):
 class WidgetFeedbackRequest(BaseModel):
     message_id: uuid.UUID
     rating: int = Field(ge=-1, le=1)  # -1 down, +1 up
+
+
+class WidgetCsatRequest(BaseModel):
+    conversation_id: uuid.UUID
+    score: int = Field(ge=1, le=5)

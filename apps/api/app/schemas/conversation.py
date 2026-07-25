@@ -28,6 +28,8 @@ class MessageResponse(BaseModel):
     content: str
     citations: list[dict[str, Any]]
     confidence: float | None
+    #: -1 thumbs down, +1 thumbs up, None if the visitor did not vote.
+    feedback: int | None
     created_at: datetime
 
 

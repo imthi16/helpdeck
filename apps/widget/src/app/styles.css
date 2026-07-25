@@ -189,3 +189,48 @@ body {
   opacity: 0.5;
   cursor: default;
 }
+
+.rating {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border-top: 1px solid #e5e7eb;
+  font-size: 13px;
+  color: #4b5563;
+}
+.rating .stars {
+  display: flex;
+  gap: 4px;
+}
+.rating .stars button {
+  width: 28px;
+  height: 28px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 13px;
+  color: #111827;
+}
+.rating .stars button:hover {
+  border-color: #9ca3af;
+  background: #f9fafb;
+}
+.rating .skip {
+  margin-left: auto;
+  border: 0;
+  background: none;
+  color: #6b7280;
+  cursor: pointer;
+  font-size: 12px;
+  text-decoration: underline;
+}
+.rating-thanks {
+  margin: 0;
+  padding: 8px 12px;
+  border-top: 1px solid #e5e7eb;
+  font-size: 13px;
+  color: #4b5563;
+}

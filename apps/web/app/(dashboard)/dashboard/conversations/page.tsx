@@ -147,9 +147,16 @@ export default function ConversationsPage() {
             ) : (
               <>
                 <div className="flex items-center justify-between">
-                  <Badge variant={STATUS_VARIANT[selected.status]} data-testid="transcript-status">
-                    {selected.status}
-                  </Badge>
+                  <div className="flex items-center gap-2">
+                    <Badge variant={STATUS_VARIANT[selected.status]} data-testid="transcript-status">
+                      {selected.status}
+                    </Badge>
+                    {selected.csat_score != null && (
+                      <span className="text-xs text-muted-foreground" data-testid="transcript-csat">
+                        Rated {selected.csat_score}/5
+                      </span>
+                    )}
+                  </div>
                   {selected.status !== "closed" && (
                     <Button size="sm" variant="outline" onClick={onResolve} data-testid="resolve">
                       Mark resolved
@@ -180,6 +187,15 @@ export default function ConversationsPage() {
                     >
                       <span className="mr-1 text-[10px] uppercase opacity-70">{message.role}</span>
                       {message.content}
+                      {message.role === "assistant" && message.feedback != null && (
+                        <span
+                          className="ml-1 text-xs"
+                          data-testid="message-feedback"
+                          title={message.feedback > 0 ? "Marked helpful" : "Marked not helpful"}
+                        >
+                          {message.feedback > 0 ? "👍" : "👎"}
+                        </span>
+                      )}
                     </div>
                   ))}
                 </div>

@@ -276,3 +276,27 @@ Recharts (dashboard only — the widget's 60KB budget is untouched), built again
 recessive hairline grid, 24px max bar with a 4px rounded data-end, only the busiest day
 directly labelled, tooltip text in ink rather than the series colour, and a "Show data"
 table view so nothing is gated behind reading a chart.
+
+## Phase 5.6 — CSAT and the feedback loop
+
+`conversations.csat_score` has existed since Phase 2 and nothing ever wrote it;
+`messages.feedback` was written by the widget's thumbs but never shown to the team. Both are
+now closed loops.
+
+- `POST /api/v1/widget/csat` (public-key auth, tenant session) records a 1–5 score. It is
+  **write-once**: re-rating would silently move the org's average, and the widget only asks
+  once anyway. Out of range → 422, another org's conversation → 404, second rating → 409.
+- **When the widget asks.** Two triggers, at most one ask per conversation (remembered in
+  `localStorage`): 60s idle after an answered turn, and — more usefully — **closing the
+  panel**. The close case has to show the prompt *instead of* closing; rendering it as the
+  panel disappears would ask a question nobody can see, so the first close on an answered,
+  unrated conversation swaps in the rating row and the next close goes through. "Not now"
+  latches the same "already asked" flag without submitting a score.
+- **The inbox** shows 👍/👎 per assistant message and `Rated n/5` beside the conversation
+  status, so the team sees what visitors thought without leaving the transcript.
+- `tests/test_csat.py` is the 5.6 Verify: a rating persists *and* shows up in the analytics
+  CSAT average — the "rating flows into analytics" requirement — plus the guards above and
+  the transcript exposing `feedback`.
+
+The widget loader is unchanged at ~1 kB gzipped (the rating UI lives in the iframe app), so
+the 60KB budget is untouched.

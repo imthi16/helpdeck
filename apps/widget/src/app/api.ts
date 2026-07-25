@@ -49,6 +49,19 @@ export async function sendFeedback(
   });
 }
 
+export async function sendCsat(
+  apiUrl: string,
+  publicKey: string,
+  conversationId: string,
+  score: number,
+): Promise<void> {
+  await fetch(`${apiUrl}/api/v1/widget/csat`, {
+    method: "POST",
+    headers: { "X-Public-Key": publicKey, "Content-Type": "application/json" },
+    body: JSON.stringify({ conversation_id: conversationId, score }),
+  });
+}
+
 export async function streamChat(
   apiUrl: string,
   publicKey: string,

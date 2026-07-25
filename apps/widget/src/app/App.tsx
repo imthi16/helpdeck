@@ -1,11 +1,22 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
-import { fetchConfig, sendFeedback, streamChat, type Citation, type WidgetConfig } from "./api";
+import {
+  fetchConfig,
+  sendCsat,
+  sendFeedback,
+  streamChat,
+  type Citation,
+  type WidgetConfig,
+} from "./api";
 import { MessageContent } from "./MessageContent";
 import { closeWidget, readParams } from "./params";
 import { loadSession, saveSession, type StoredMessage } from "./storage";
 
 const params = readParams();
+
+/** How long a conversation sits idle before we ask how it went. */
+const IDLE_BEFORE_RATING_MS = 60_000;
+const SCORES = [1, 2, 3, 4, 5] as const;
 
 export function App() {
   const [config, setConfig] = useState<WidgetConfig | null>(null);
@@ -13,6 +24,10 @@ export function App() {
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [activeCitation, setActiveCitation] = useState<Citation | null>(null);
+  const [askRating, setAskRating] = useState(false);
+  const [rated, setRated] = useState<boolean>(() => loadSession(params.publicKey).rated ?? false);
+  // Transient: the thank-you shows after rating in this session, not forever.
+  const [justRated, setJustRated] = useState(false);
   const conversationId = useRef<string | undefined>(loadSession(params.publicKey).conversationId);
   const scroller = useRef<HTMLDivElement>(null);
   const color = config?.color ?? params.color;
@@ -22,9 +37,49 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    saveSession(params.publicKey, { conversationId: conversationId.current, messages });
+    saveSession(params.publicKey, { conversationId: conversationId.current, messages, rated });
     scroller.current?.scrollTo({ top: scroller.current.scrollHeight });
-  }, [messages]);
+  }, [messages, rated]);
+
+  const answered = messages.some((m) => m.role === "assistant" && m.content);
+
+  // Idle trigger: once a conversation has been answered and goes quiet, ask how
+  // it went. The close button asks too (see requestClose) — "closed or idle",
+  // asked at most once per conversation.
+  useEffect(() => {
+    if (rated || streaming || !answered || !conversationId.current) return;
+    const timer = setTimeout(() => setAskRating(true), IDLE_BEFORE_RATING_MS);
+    return () => clearTimeout(timer);
+  }, [answered, streaming, rated]);
+
+  /** Closing an answered, unrated conversation asks for a rating first.
+   *
+   * The prompt has to be shown *instead of* closing: rendering it as the panel
+   * disappears would ask a question nobody can see. The next close goes through.
+   */
+  function requestClose() {
+    if (!rated && answered && conversationId.current) {
+      setAskRating(true);
+      setRated(true);
+      return;
+    }
+    closeWidget();
+  }
+
+  /** Remember we asked, without sending a score. */
+  function skipRating() {
+    setAskRating(false);
+    setRated(true);
+  }
+
+  async function rate(score: number) {
+    const conversation = conversationId.current;
+    setAskRating(false);
+    setRated(true);
+    setJustRated(true);
+    if (!conversation || !params.apiUrl) return;
+    await sendCsat(params.apiUrl, params.publicKey, conversation, score);
+  }
 
   const patchLast = (patch: (m: StoredMessage) => StoredMessage) =>
     setMessages((prev) => {
@@ -76,7 +131,7 @@ export function App() {
         <span class="title" data-testid="widget-title">
           {config?.org_name ?? "HelpDeck"}
         </span>
-        <button class="close" aria-label="Close chat" onClick={closeWidget}>
+        <button class="close" aria-label="Close chat" onClick={requestClose}>
           &#10005;
         </button>
       </header>
@@ -139,6 +194,32 @@ export function App() {
           </div>
           <p>{activeCitation.snippet}</p>
         </div>
+      )}
+
+      {askRating && !justRated && (
+        <div class="rating" data-testid="csat-prompt">
+          <span>How did we do?</span>
+          <div class="stars">
+            {SCORES.map((score) => (
+              <button
+                key={score}
+                aria-label={`Rate ${score} out of 5`}
+                data-testid={`csat-${score}`}
+                onClick={() => void rate(score)}
+              >
+                {score}
+              </button>
+            ))}
+          </div>
+          <button class="skip" data-testid="csat-skip" onClick={skipRating}>
+            Not now
+          </button>
+        </div>
+      )}
+      {justRated && (
+        <p class="rating-thanks" data-testid="csat-thanks">
+          Thanks for the feedback!
+        </p>
       )}
 
       <div class="footer">
