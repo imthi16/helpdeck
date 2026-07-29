@@ -34,6 +34,7 @@ from app.schemas.widget import (
     WidgetFeedbackRequest,
 )
 from app.services import api_keys as api_keys_service
+from app.services import tracing
 from app.services.cache import ResponseCache
 from app.services.llm import LLMGateway
 from app.services.rate_limit import RateLimiter
@@ -173,6 +174,16 @@ async def widget_feedback(
         if message is None or message.org_id != org.id or message.role != MessageRole.assistant:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="message not found")
         message.feedback = payload.rating
+        trace_id = message.trace_id
+
+    # Thumbs land on the turn's own trace, so Langfuse can compare human judgement
+    # against the faithfulness score recorded for that same turn.
+    tracing.score_trace(
+        trace_id,
+        name="user_feedback",
+        value=1 if payload.rating > 0 else 0,
+        data_type="BOOLEAN",
+    )
 
 
 @router.post("/csat", status_code=status.HTTP_204_NO_CONTENT)
@@ -204,3 +215,9 @@ async def widget_csat(
         if conversation.csat_score is not None:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="already rated")
         conversation.csat_score = payload.score
+
+    # CSAT rates the conversation, not one answer — the Langfuse session (which is
+    # the conversation id) is its natural home.
+    tracing.score_session(
+        str(payload.conversation_id), name="csat", value=payload.score, data_type="NUMERIC"
+    )

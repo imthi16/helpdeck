@@ -7,9 +7,10 @@
 
 ## Status
 
-- **Current phase:** 5 (complete) → 6 next
-- **Last updated:** 2026-07-25
-- **Blockers:** none
+- **Current phase:** 6 (in progress — 6.1 code complete, awaiting a real Langfuse project)
+- **Last updated:** 2026-07-29
+- **Blockers:** 6.1's Verify (a costed trace tree visible in Langfuse) needs
+  `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY`; none available in this environment.
 
 ---
 

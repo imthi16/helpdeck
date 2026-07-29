@@ -300,3 +300,47 @@ now closed loops.
 
 The widget loader is unchanged at ~1 kB gzipped (the rating UI lives in the iframe app), so
 the 60KB budget is untouched.
+
+## Phase 6.1 — Langfuse everywhere
+
+`app/services/tracing.py` was a 19-line client factory; it is now the tracing **facade** and
+the only module allowed to import the Langfuse SDK (enforced by
+`tests/test_tracing.py::test_only_the_facade_imports_the_langfuse_sdk`). Callers use
+`observation()`, `turn_trace()`, `score_trace()` / `score_session()`, all of which hand out
+no-ops when the keys are unset, so nothing branches on whether tracing is configured.
+
+- **A latent bug this closed.** `llm.py` and `embeddings.py` called
+  `langfuse.start_as_current_generation(...)`, which does not exist in the pinned SDK
+  (langfuse 4.13.2 — it is `start_as_current_observation(as_type="generation")`). Tracing was
+  never exercised because no test sets keys, so the first request with `LANGFUSE_*` set would
+  have raised `AttributeError` inside the gateway. Both now go through the facade.
+- **One trace per turn.** `run_chat_stream` opens `chat.turn` and the graph's node spans
+  (`agent.router`, `agent.retrieve`, `agent.answer`, `agent.faithfulness_judge`,
+  `agent.escalate`) nest under it. `org_id` / `conversation_id` are *propagated*, not merely
+  set on the root: Langfuse aggregations only count observations that carry the attribute, so
+  per-tenant cost would otherwise miss every child span. The conversation doubles as the
+  Langfuse `session_id`, so a thread reads as one session.
+- **Retrieval is the audit trail.** `agent.retrieve` records chunk id, document id and fused
+  score per chunk — exactly what the model was allowed to see for that answer.
+- **Streamed answers have no provider usage payload**, so `llm.stream` counts tokens with
+  tiktoken and labels the span `usage_source: "estimated (tiktoken); ..."` rather than passing
+  an estimate off as billing truth. Local OSS models cost 0 by definition; point `LLM_*_MODEL`
+  at a hosted provider and real cost appears with no code change.
+- **Feedback needs a trace id later than the turn.** Thumbs arrive minutes after the answer,
+  so `messages.trace_id` (migration `c41d0a9e7b52`) stores the turn's trace and
+  `/widget/feedback` scores it. Cache-served answers have no trace of their own → null
+  `trace_id` and the score is skipped rather than misfiled. CSAT rates the whole conversation,
+  so it is a *session* score, not a trace score.
+- Score emission is best-effort (`langfuse_score_failed` logged, never raised): telemetry must
+  not fail a request.
+
+`docs/observability.md` documents the trace shape, the score table, and self-hosting Langfuse
+for the on-prem story.
+
+**Verify status:** the automated half is done — `tests/test_tracing.py` asserts the whole tree
+(node spans, chunk ids + scores, `usage_details` on both generations) against a recording fake,
+and `test_chat_endpoint.py::test_turn_is_traced_and_trace_id_persisted_on_the_message` covers
+the playground path end to end. The plan's *"shows a complete, costed trace tree in Langfuse"*
+needs real `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` (Cloud free tier) — no keys are
+available in this environment, so that eyeball check is outstanding and 6.1 stays unchecked
+until someone runs one playground turn against a real project.

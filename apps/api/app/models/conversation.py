@@ -99,6 +99,10 @@ class Message(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     tokens_out: Mapped[int | None] = mapped_column(Integer, nullable=True)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     feedback: Mapped[int | None] = mapped_column(Integer, nullable=True)  # -1 down, +1 up
+    # Langfuse trace of the turn that produced this message, so feedback arriving
+    # minutes later can still be scored onto the right trace. Null when tracing
+    # is off or the answer was served from cache.
+    trace_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class Escalation(Base, UUIDPrimaryKeyMixin, TimestampMixin):

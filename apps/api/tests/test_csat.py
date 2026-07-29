@@ -26,7 +26,9 @@ from app.models import (
 from app.routers.auth import get_auth_sessionmaker
 from app.routers.deps import get_app_session_factory
 from app.routers.widget import get_widget_rate_limiter, get_widget_sessionmaker
+from app.services import tracing
 from app.services.api_keys import create_key
+from tests.test_tracing import RecordingLangfuse
 
 Sessionmaker = async_sessionmaker[AsyncSession]
 PASSWORD = "hunter2pw"
@@ -257,4 +259,53 @@ async def test_thumbs_feedback_is_exposed_in_the_transcript(
             if user is not None:
                 await session.delete(user)
                 await session.commit()
+        await _drop_org(db_sessionmaker, org_id)
+
+
+async def test_feedback_and_csat_become_langfuse_scores(
+    db_sessionmaker: Sessionmaker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Human judgement lands next to the model's own faithfulness score (6.1)."""
+    langfuse = RecordingLangfuse()
+    monkeypatch.setattr(tracing, "get_langfuse", lambda: langfuse)
+    key = f"pk_csat_{uuid.uuid4().hex[:12]}"
+    org_id, conversation_id = await _org_with_conversation(db_sessionmaker, public_key=key)
+    try:
+        # Thumbs are scored onto the trace recorded for that specific turn.
+        async with db_sessionmaker() as session:
+            message = await session.scalar(
+                select(Message).where(
+                    Message.conversation_id == conversation_id,
+                    Message.role == MessageRole.assistant,
+                )
+            )
+            message.trace_id = RecordingLangfuse.TRACE_ID
+            message_id = message.id
+            await session.commit()
+
+        async with _client() as widget:
+            assert (
+                await widget.post(
+                    "/api/v1/widget/feedback",
+                    headers={"X-Public-Key": key},
+                    json={"message_id": str(message_id), "rating": 1},
+                )
+            ).status_code == 204
+            assert (
+                await widget.post(
+                    "/api/v1/widget/csat",
+                    headers={"X-Public-Key": key},
+                    json={"conversation_id": str(conversation_id), "score": 4},
+                )
+            ).status_code == 204
+
+        thumbs = langfuse.score_named("user_feedback")
+        assert thumbs["trace_id"] == RecordingLangfuse.TRACE_ID
+        assert thumbs["value"] == 1
+
+        # CSAT rates the conversation, which is the Langfuse session.
+        csat = langfuse.score_named("csat")
+        assert csat["session_id"] == str(conversation_id)
+        assert csat["value"] == 4
+    finally:
         await _drop_org(db_sessionmaker, org_id)

@@ -15,11 +15,13 @@ from app.models import Membership, MembershipRole, Message, MessageRole, Organiz
 from app.routers.auth import get_auth_sessionmaker
 from app.routers.chat import get_chat_cache, get_chat_gateway
 from app.routers.deps import get_app_session_factory
+from app.services import tracing
 from app.services.cache import ResponseCache, get_redis
 from app.services.embeddings import EmbeddingService
 from app.services.ingestion.seed import seed_corpus
 from app.services.llm import LLMGateway, LLMUsage, OfflineGroundedProvider
 from app.services.storage import LocalFileStorage
+from tests.test_tracing import RecordingLangfuse
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CORPUS_DIR = REPO_ROOT / "eval" / "fixtures" / "corpus"
@@ -223,6 +225,50 @@ async def test_identical_query_served_from_cache_without_llm_call(
     finally:
         app.dependency_overrides.clear()
         await redis_client.aclose()
+
+
+async def test_turn_is_traced_and_trace_id_persisted_on_the_message(
+    db_sessionmaker: Sessionmaker,
+    app_sessionmaker: Sessionmaker,
+    seeded: uuid.UUID,
+    member_client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A playground turn produces one trace tree, scored and linked to the message."""
+    langfuse = RecordingLangfuse()
+    monkeypatch.setattr(tracing, "get_langfuse", lambda: langfuse)
+    app.dependency_overrides[get_app_session_factory] = lambda: app_sessionmaker
+    app.dependency_overrides[get_chat_gateway] = lambda: LLMGateway(
+        OfflineGroundedProvider(), cheap_model="c", strong_model="s"
+    )
+    try:
+        response = await member_client.post(
+            "/api/v1/chat",
+            json={
+                "org_id": str(seeded),
+                "message": "How often should I descale my espresso machine?",
+                "debug": True,
+            },
+        )
+        assert response.status_code == 200
+        events = _parse_sse(response.text)
+        done = events[-1][1]
+
+        root = langfuse.roots[0]
+        assert root.name == "chat.turn"
+        assert root.fields["input"] == {
+            "question": "How often should I descale my espresso machine?"
+        }
+        assert langfuse.score_named("faithfulness")["value"] == done["confidence"]
+        assert langfuse.score_named("escalated")["value"] == 0
+
+        debug = next(payload for name, payload in events if name == "debug")
+        assert debug["trace_id"] == RecordingLangfuse.TRACE_ID
+
+        messages = await _messages(db_sessionmaker, uuid.UUID(done["conversation_id"]))
+        assert messages[1].trace_id == RecordingLangfuse.TRACE_ID
+    finally:
+        app.dependency_overrides.clear()
 
 
 async def test_disconnect_midstream_leaves_no_assistant_message(

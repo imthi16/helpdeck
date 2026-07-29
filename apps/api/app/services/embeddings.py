@@ -14,7 +14,7 @@ from typing import Any, Protocol
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.services.llm import ollama_reachable
-from app.services.tracing import get_langfuse
+from app.services.tracing import observation
 
 logger = get_logger(__name__)
 
@@ -165,11 +165,9 @@ class EmbeddingService:
         return (await self.embed_texts([text]))[0]
 
     async def _embed_batch_traced(self, batch: list[str]) -> list[list[float]]:
-        langfuse = get_langfuse()
-        if langfuse is None:
-            return await self._embed_batch_with_retry(batch)
-        with langfuse.start_as_current_generation(
-            name="embed_texts",
+        with observation(
+            "embed_texts",
+            as_type="embedding",
             model=self._model,
             input={"batch_size": len(batch)},
         ) as generation:

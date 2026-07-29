@@ -22,6 +22,7 @@ from app.core.logging import get_logger
 from app.models import Conversation, ConversationChannel, Message, MessageRole
 from app.routers.deps import AgentDep, AppSessionFactoryDep
 from app.schemas.chat import ChatRequest
+from app.services import tracing
 from app.services.cache import CachedAnswer, ResponseCache, compute_kb_version, get_redis
 from app.services.llm import LLMGateway
 
@@ -82,6 +83,7 @@ async def _persist_message(
     tokens_in: int | None = None,
     tokens_out: int | None = None,
     latency_ms: int | None = None,
+    trace_id: str | None = None,
 ) -> uuid.UUID:
     async with db() as session:
         message = Message(
@@ -95,6 +97,7 @@ async def _persist_message(
             tokens_in=tokens_in,
             tokens_out=tokens_out,
             latency_ms=latency_ms,
+            trace_id=trace_id,
         )
         session.add(message)
         await session.flush()
@@ -187,105 +190,140 @@ async def run_chat_stream(
         final: dict[str, Any] = {}
         streamed: list[str] = []
         try:
-            deps = build_dependencies(session_factory=db, gateway=gateway)
-            graph = build_agent_graph(deps, checkpointer=checkpointer)
-            initial = {
-                "org_id": str(org_id),
-                "conversation_id": str(resolved_conversation_id),
-                "question": message,
-            }
-            config = {"configurable": {"thread_id": str(resolved_conversation_id)}}
+            # One Langfuse trace per turn: the agent's node spans nest under it and
+            # inherit org_id/conversation_id, so cost and quality are attributable
+            # per tenant and per thread.
+            with tracing.turn_trace(
+                "chat.turn",
+                org_id=str(org_id),
+                conversation_id=str(resolved_conversation_id),
+                user_id=user_identifier,
+                input={"question": message},
+                metadata={"channel": str(channel)},
+                tags=[str(channel)],
+            ) as turn:
+                deps = build_dependencies(session_factory=db, gateway=gateway)
+                graph = build_agent_graph(deps, checkpointer=checkpointer)
+                initial = {
+                    "org_id": str(org_id),
+                    "conversation_id": str(resolved_conversation_id),
+                    "question": message,
+                }
+                config = {"configurable": {"thread_id": str(resolved_conversation_id)}}
 
-            async for mode, data in graph.astream(
-                initial, config=config, stream_mode=["updates", "custom"]
-            ):
-                if mode == "custom":
-                    if data["type"] == "status":
-                        yield _sse("status", {"stage": data["value"]})
-                    elif data["type"] == "token":
-                        streamed.append(data["value"])
-                        yield _sse("token", {"text": data["value"]})
-                elif mode == "updates":
-                    for delta in data.values():
-                        if delta:
-                            final.update(delta)
+                async for mode, data in graph.astream(
+                    initial, config=config, stream_mode=["updates", "custom"]
+                ):
+                    if mode == "custom":
+                        if data["type"] == "status":
+                            yield _sse("status", {"stage": data["value"]})
+                        elif data["type"] == "token":
+                            streamed.append(data["value"])
+                            yield _sse("token", {"text": data["value"]})
+                    elif mode == "updates":
+                        for delta in data.values():
+                            if delta:
+                                final.update(delta)
 
-            streamed_text = "".join(streamed).strip()
-            content = streamed_text or final.get("response", "")
-            citations = final.get("citations", []) or []
-            confidence = final.get("confidence")
-            latency_ms = int((perf_counter() - start) * 1000)
+                streamed_text = "".join(streamed).strip()
+                content = streamed_text or final.get("response", "")
+                citations = final.get("citations", []) or []
+                confidence = final.get("confidence")
+                latency_ms = int((perf_counter() - start) * 1000)
 
-            # Canned paths (chitchat / human handoff) produce no tokens; send the body.
-            if not streamed_text and content:
-                yield _sse("token", {"text": content})
+                # Canned paths (chitchat / human handoff) produce no tokens; send the body.
+                if not streamed_text and content:
+                    yield _sse("token", {"text": content})
 
-            escalated = bool(final.get("escalated", False))
-            message_id = await _persist_message(
-                db,
-                org_id=org_id,
-                conversation_id=resolved_conversation_id,
-                role=MessageRole.assistant,
-                content=content,
-                citations=citations,
-                confidence=confidence,
-                model_used=final.get("model_used"),
-                tokens_in=final.get("tokens_in"),
-                tokens_out=final.get("tokens_out"),
-                latency_ms=latency_ms,
-            )
-
-            if debug:
-                yield _sse(
-                    "debug",
-                    {
+                escalated = bool(final.get("escalated", False))
+                turn.update(
+                    output={
+                        "answer": content,
+                        "citations": [c.get("n") for c in citations],
+                        "escalated": escalated,
+                    },
+                    metadata={
                         "intent": final.get("intent"),
-                        "model": final.get("model_used"),
-                        "confidence": confidence,
+                        "model_used": final.get("model_used"),
                         "latency_ms": latency_ms,
-                        "tokens_in": final.get("tokens_in"),
-                        "tokens_out": final.get("tokens_out"),
-                        "chunks": [
-                            {
-                                "n": c.get("n"),
-                                "document_title": c.get("document_title"),
-                                "score": c.get("score"),
-                                "snippet": c.get("content", "")[:200],
-                            }
-                            for c in final.get("chunks", []) or []
-                        ],
                     },
                 )
-
-            # Cache only settled (non-escalated) answers so escalations always
-            # re-run the agent and record a fresh escalation row.
-            if not escalated and content:
-                await cache.set(
-                    str(org_id),
-                    message,
-                    kb_version,
-                    CachedAnswer(
-                        content=content,
-                        citations=citations,
-                        confidence=confidence,
-                        escalated=escalated,
-                        model_used=final.get("model_used"),
-                    ),
+                if confidence is not None:
+                    turn.score("faithfulness", confidence, data_type="NUMERIC")
+                turn.score(
+                    "escalated",
+                    1 if escalated else 0,
+                    data_type="BOOLEAN",
+                    comment=final.get("escalation_reason"),
                 )
 
-            for citation in citations:
-                yield _sse("citation", citation)
+                message_id = await _persist_message(
+                    db,
+                    org_id=org_id,
+                    conversation_id=resolved_conversation_id,
+                    role=MessageRole.assistant,
+                    content=content,
+                    citations=citations,
+                    confidence=confidence,
+                    model_used=final.get("model_used"),
+                    tokens_in=final.get("tokens_in"),
+                    tokens_out=final.get("tokens_out"),
+                    latency_ms=latency_ms,
+                    trace_id=turn.trace_id,
+                )
 
-            yield _sse(
-                "done",
-                {
-                    "message_id": str(message_id),
-                    "conversation_id": str(resolved_conversation_id),
-                    "confidence": confidence,
-                    "escalated": escalated,
-                    "cached": False,
-                },
-            )
+                if debug:
+                    yield _sse(
+                        "debug",
+                        {
+                            "intent": final.get("intent"),
+                            "model": final.get("model_used"),
+                            "confidence": confidence,
+                            "latency_ms": latency_ms,
+                            "tokens_in": final.get("tokens_in"),
+                            "tokens_out": final.get("tokens_out"),
+                            "trace_id": turn.trace_id,
+                            "chunks": [
+                                {
+                                    "n": c.get("n"),
+                                    "document_title": c.get("document_title"),
+                                    "score": c.get("score"),
+                                    "snippet": c.get("content", "")[:200],
+                                }
+                                for c in final.get("chunks", []) or []
+                            ],
+                        },
+                    )
+
+                # Cache only settled (non-escalated) answers so escalations always
+                # re-run the agent and record a fresh escalation row.
+                if not escalated and content:
+                    await cache.set(
+                        str(org_id),
+                        message,
+                        kb_version,
+                        CachedAnswer(
+                            content=content,
+                            citations=citations,
+                            confidence=confidence,
+                            escalated=escalated,
+                            model_used=final.get("model_used"),
+                        ),
+                    )
+
+                for citation in citations:
+                    yield _sse("citation", citation)
+
+                yield _sse(
+                    "done",
+                    {
+                        "message_id": str(message_id),
+                        "conversation_id": str(resolved_conversation_id),
+                        "confidence": confidence,
+                        "escalated": escalated,
+                        "cached": False,
+                    },
+                )
         except Exception as exc:  # noqa: BLE001 - surface any failure as an SSE error
             logger.exception("chat_stream_failed", conversation_id=str(resolved_conversation_id))
             yield _sse("error", {"detail": str(exc)})

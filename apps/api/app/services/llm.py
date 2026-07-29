@@ -23,7 +23,8 @@ from urllib.parse import urlparse
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
-from app.services.tracing import get_langfuse
+from app.services.ingestion.chunker import count_tokens
+from app.services.tracing import observation
 
 logger = get_logger(__name__)
 
@@ -269,23 +270,22 @@ class LLMGateway:
         **kwargs: Any,
     ) -> LLMResponse:
         model = self.model_for(route)
-        langfuse = get_langfuse()
         start = time.perf_counter()
         try:
-            if langfuse is None:
+            with observation(
+                "llm.complete",
+                as_type="generation",
+                model=model,
+                input=[m.__dict__ for m in messages],
+            ) as generation:
                 text, usage = await self._provider.complete(model, messages, **kwargs)
-            else:
-                with langfuse.start_as_current_generation(
-                    name="llm.complete", model=model, input=[m.__dict__ for m in messages]
-                ) as generation:
-                    text, usage = await self._provider.complete(model, messages, **kwargs)
-                    generation.update(
-                        output=text,
-                        usage_details={
-                            "input": usage.prompt_tokens,
-                            "output": usage.completion_tokens,
-                        },
-                    )
+                generation.update(
+                    output=text,
+                    usage_details={
+                        "input": usage.prompt_tokens,
+                        "output": usage.completion_tokens,
+                    },
+                )
         except Exception as exc:
             raise LLMError(str(exc)) from exc
         latency_ms = int((time.perf_counter() - start) * 1000)
@@ -307,5 +307,30 @@ class LLMGateway:
         **kwargs: Any,
     ) -> AsyncIterator[str]:
         model = self.model_for(route)
-        async for piece in self._provider.stream(model, messages, **kwargs):
-            yield piece
+        pieces: list[str] = []
+        start = time.perf_counter()
+        # A streamed response carries no usage payload, so tokens are counted
+        # locally with tiktoken and the span says so rather than implying the
+        # provider reported them.
+        with observation(
+            "llm.stream", as_type="generation", model=model, input=[m.__dict__ for m in messages]
+        ) as generation:
+            async for piece in self._provider.stream(model, messages, **kwargs):
+                pieces.append(piece)
+                yield piece
+            text = "".join(pieces)
+            tokens_in = count_tokens("\n".join(m.content for m in messages))
+            tokens_out = count_tokens(text)
+            generation.update(
+                output=text,
+                usage_details={"input": tokens_in, "output": tokens_out},
+                metadata={"usage_source": "estimated (tiktoken); streamed response has no usage"},
+            )
+        logger.info(
+            "llm_stream",
+            model=model,
+            route=str(route),
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            latency_ms=int((time.perf_counter() - start) * 1000),
+        )
