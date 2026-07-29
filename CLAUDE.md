@@ -29,18 +29,6 @@ Execute `docs/IMPLEMENTATION_PLAN.md` strictly in order, one task at a time.
 - Observability: Langfuse (all LLM calls traced). Eval: RAGAS golden set, gated in CI
 - Infra: Docker Compose (dev); Vercel + Railway/Render + Neon (prod)
 
-## Repository layout
-
-```
-apps/api/        FastAPI app  (app/core, app/models, app/schemas, app/routers,
-                 app/services, app/agent, app/workers) + tests/ + alembic/
-apps/web/        Next.js 16 dashboard (app/, components/, lib/)
-apps/widget/     Embeddable widget bundle (src/, vite.config.ts)
-eval/            RAGAS golden dataset + run_eval.py
-infra/           docker-compose.yml, terraform/
-docs/            IMPLEMENTATION_PLAN.md, architecture.md, ADRs
-```
-
 ## Commands
 
 ```bash
@@ -72,9 +60,7 @@ uv run python eval/run_eval.py                        # RAGAS report + threshold
 
 Defined in `.env` (never committed). ALWAYS update `.env.example` when adding one.
 
-`DATABASE_URL`, `REDIS_URL`, `JWT_SECRET`, `OLLAMA_BASE_URL`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
-`EMBEDDING_MODEL`, `EMBEDDING_DIMS`, `LLM_CHEAP_MODEL`, `LLM_STRONG_MODEL`, `RERANKER` (none|cohere|bge),
-`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST`, `ALLOWED_ORIGINS`
+See `.env.example` for the full list. `RERANKER` accepts `none|cohere|bge`.
 
 ## Architecture at a glance
 
