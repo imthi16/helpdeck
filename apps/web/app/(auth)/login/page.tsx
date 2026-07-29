@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 
+import { Wordmark } from "@/components/wordmark";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -89,7 +90,8 @@ function LoginForm() {
 
 export default function LoginPage() {
   return (
-    <main className="flex min-h-screen items-center justify-center p-8">
+    <main className="flex min-h-screen flex-col items-center justify-center gap-6 bg-rail p-8">
+      <Wordmark className="text-rail-foreground" size="lg" />
       <Suspense>
         <LoginForm />
       </Suspense>

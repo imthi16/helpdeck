@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.config import get_settings
 from app.core.security import hash_password
 from app.main import app
 from app.models import Membership, MembershipRole, Message, MessageRole, Organization, User
@@ -264,6 +265,8 @@ async def test_turn_is_traced_and_trace_id_persisted_on_the_message(
 
         debug = next(payload for name, payload in events if name == "debug")
         assert debug["trace_id"] == RecordingLangfuse.TRACE_ID
+        # The playground draws confidence against this line, so it has to be sent.
+        assert debug["threshold"] == get_settings().faithfulness_threshold
 
         messages = await _messages(db_sessionmaker, uuid.UUID(done["conversation_id"]))
         assert messages[1].trace_id == RecordingLangfuse.TRACE_ID

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import { ConversationsChart } from "@/components/conversations-chart";
 import { PageHeader } from "@/components/page-header";
+import { ThresholdGauge } from "@/components/threshold-gauge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -24,26 +25,44 @@ import {
   type RangeDays,
 } from "@/lib/analytics";
 
-/** Label · value (+ optional context line). No sparkline: the chart below is the trend. */
+/**
+ * Label · value (+ optional context line). No sparkline: the chart below is the
+ * trend. `share` draws the value on the console's track when it is a fraction of
+ * the whole — deflection and escalation are two halves of one number, and seeing
+ * them as lengths says that faster than two percentages side by side.
+ */
 function StatTile({
   label,
   value,
   context,
   testId,
+  share,
+  tone,
 }: {
   label: string;
   value: string;
   context?: string;
   testId: string;
+  share?: number | null;
+  tone?: "grounded" | "handoff";
 }) {
   return (
-    <Card>
-      <CardContent className="p-4">
-        <p className="text-sm text-muted-foreground">{label}</p>
-        <p className="mt-1 text-2xl font-semibold" data-testid={testId}>
+    <Card size="sm">
+      <CardContent>
+        <p className="eyebrow">{label}</p>
+        <p className="mt-2 font-display text-[1.75rem] font-semibold leading-none" data-testid={testId}>
           {value}
         </p>
-        {context && <p className="mt-1 text-xs text-muted-foreground">{context}</p>}
+        {share != null && tone && (
+          <ThresholdGauge
+            className="mt-3"
+            size="sm"
+            value={share}
+            tone={tone}
+            label={`${label} ${value}`}
+          />
+        )}
+        {context && <p className="mt-2 text-xs text-muted-foreground">{context}</p>}
       </CardContent>
     </Card>
   );
@@ -109,12 +128,16 @@ export default function AnalyticsPage() {
           value={data ? formatPercent(data.deflection_rate) : "—"}
           context={data ? `${data.deflected_conversations} answered without a handoff` : undefined}
           testId="stat-deflection"
+          share={data?.deflection_rate}
+          tone="grounded"
         />
         <StatTile
           label="Escalation rate"
           value={data ? formatPercent(data.escalation_rate) : "—"}
           context={data ? `${data.escalated_conversations} handed to a human` : undefined}
           testId="stat-escalation"
+          share={data?.escalation_rate}
+          tone="handoff"
         />
         <StatTile
           label="CSAT"

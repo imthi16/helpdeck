@@ -26,10 +26,10 @@ import {
   type ConversationSummary,
 } from "@/lib/conversations";
 
-const STATUS_VARIANT: Record<ConversationStatus, "default" | "secondary" | "destructive"> = {
+const STATUS_VARIANT: Record<ConversationStatus, "grounded" | "secondary" | "handoff"> = {
   open: "secondary",
-  escalated: "destructive",
-  closed: "default",
+  escalated: "handoff",
+  closed: "grounded",
 };
 
 export default function ConversationsPage() {
@@ -165,27 +165,27 @@ export default function ConversationsPage() {
                 </div>
 
                 {selected.escalations.length > 0 && (
-                  <div className="rounded border border-destructive/40 p-2 text-xs">
-                    <p className="font-medium">Escalation</p>
+                  <div className="rounded-md border-l-2 border-handoff bg-handoff/5 px-3 py-2 text-xs">
+                    <p className="eyebrow text-handoff">Why it handed off</p>
                     {selected.escalations.map((e) => (
-                      <p key={e.id} className="text-muted-foreground">
+                      <p key={e.id} className="mt-1 text-muted-foreground">
                         {e.reason} — {e.status}
                       </p>
                     ))}
                   </div>
                 )}
 
-                <div className="max-h-72 space-y-2 overflow-y-auto" data-testid="transcript">
+                <div className="max-h-72 space-y-3 overflow-y-auto" data-testid="transcript">
                   {selected.messages.map((message) => (
                     <div
                       key={message.id}
                       className={
                         message.role === "user"
-                          ? "rounded bg-primary px-2 py-1 text-primary-foreground"
-                          : "rounded bg-muted px-2 py-1"
+                          ? "rounded-md bg-secondary px-3 py-2"
+                          : "border-l-2 border-mark px-3 py-1"
                       }
                     >
-                      <span className="mr-1 text-[10px] uppercase opacity-70">{message.role}</span>
+                      <span className="eyebrow mr-2">{message.role}</span>
                       {message.content}
                       {message.role === "assistant" && message.feedback != null && (
                         <span

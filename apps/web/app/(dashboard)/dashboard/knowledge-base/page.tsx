@@ -46,11 +46,13 @@ import {
   type DocumentStatus,
 } from "@/lib/documents";
 
-const STATUS_VARIANT: Record<DocumentStatus, "default" | "secondary" | "destructive"> = {
+// A source is either answerable or it is a problem — the same two outcomes the
+// rest of the console uses, so status colour means one thing everywhere.
+const STATUS_VARIANT: Record<DocumentStatus, "grounded" | "secondary" | "handoff"> = {
   pending: "secondary",
   processing: "secondary",
-  ready: "default",
-  failed: "destructive",
+  ready: "grounded",
+  failed: "handoff",
 };
 
 function StatusBadge({ status }: { status: DocumentStatus }) {
@@ -164,6 +166,16 @@ export default function KnowledgeBasePage() {
     <div className="mx-auto max-w-4xl">
       <PageHeader
         title="Knowledge Base"
+        // The count is the state of the thing itself: how much the assistant can
+        // draw on right now.
+        eyebrow={
+          documents.length === 0
+            ? "No sources yet"
+            : `${documents.length} source${documents.length === 1 ? "" : "s"} · ${documents.reduce(
+                (sum, doc) => sum + doc.chunk_count,
+                0,
+              )} passages`
+        }
         description="Upload documents and manage the sources your assistant answers from."
       />
 
@@ -284,11 +296,11 @@ export default function KnowledgeBasePage() {
                 documents.map((doc) => (
                   <TableRow key={doc.id} data-testid="doc-row" data-title={doc.title}>
                     <TableCell className="font-medium">{doc.title}</TableCell>
-                    <TableCell className="uppercase">{doc.source_type}</TableCell>
+                    <TableCell className="eyebrow">{doc.source_type}</TableCell>
                     <TableCell>
                       <StatusBadge status={doc.status} />
                     </TableCell>
-                    <TableCell className="text-right" data-testid="doc-chunks">
+                    <TableCell className="data text-right" data-testid="doc-chunks">
                       {doc.chunk_count}
                     </TableCell>
                     <TableCell className="flex justify-end gap-2">

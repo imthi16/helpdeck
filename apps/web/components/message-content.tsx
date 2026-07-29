@@ -48,6 +48,9 @@ export function MessageContent({
           const n = Number(citeMatch[1]);
           const citation = byN.get(n);
           return (
+            // The citation keeps its brackets and gets the highlighter: the one
+            // place colour enters the assistant's prose, because the source is
+            // the only claim the product makes about its own answer.
             <sup
               key={`cite-${index}`}
               data-testid="citation-chip"
@@ -56,9 +59,9 @@ export function MessageContent({
                   ? `${citation.document_title}: ${citation.snippet}`
                   : `Source ${n}`
               }
-              className="mx-0.5 cursor-help rounded bg-primary/10 px-1 text-[10px] font-medium text-primary"
+              className="mx-0.5 cursor-help rounded-[3px] bg-mark-soft px-[3px] font-mono text-[10px] font-medium text-foreground decoration-mark underline-offset-2 hover:underline"
             >
-              {n}
+              [{n}]
             </sup>
           );
         }

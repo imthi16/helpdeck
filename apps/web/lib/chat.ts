@@ -19,9 +19,12 @@ export interface DebugInfo {
   intent: string | null;
   model: string | null;
   confidence: number | null;
+  /** Faithfulness score below which the turn escalates instead of answering. */
+  threshold?: number | null;
   latency_ms: number;
   tokens_in: number | null;
   tokens_out: number | null;
+  trace_id?: string | null;
   chunks: DebugChunk[];
 }
 

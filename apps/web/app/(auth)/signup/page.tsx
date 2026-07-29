@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { Wordmark } from "@/components/wordmark";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -48,7 +49,8 @@ export default function SignupPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center p-8">
+    <main className="flex min-h-screen flex-col items-center justify-center gap-6 bg-rail p-8">
+      <Wordmark className="text-rail-foreground" size="lg" />
       <Card className="w-full max-w-sm">
         <CardHeader>
           <CardTitle>Create your HelpDeck</CardTitle>

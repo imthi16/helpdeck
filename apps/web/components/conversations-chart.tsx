@@ -16,11 +16,12 @@ import { formatDay, type DayCount } from "@/lib/analytics";
 /**
  * Conversations per day: magnitude over time, one series.
  *
- * Single series, so no legend — the card title says what is plotted. Colours are
- * the validated blue for both modes (light #2a78d6 / dark #3987e5), declared as
- * scoped custom properties so the mode swap happens in one place; grid and axes
- * are recessive hairlines; the busiest day is the only directly labelled bar,
- * with the rest carried by the axis and the hover tooltip.
+ * Single series, so no legend — the card title says what is plotted. The bars
+ * wear the console's slate, not a chart-library blue: volume is neutral here, and
+ * teal/rose are reserved for the two outcomes (grounded, handed off) so those
+ * colours keep meaning something. Grid and axes are recessive hairlines; the
+ * busiest day is the only directly labelled bar, with the rest carried by the
+ * axis and the hover tooltip.
  */
 export function ConversationsChart({ data }: { data: DayCount[] }) {
   const peak = data.reduce((max, point) => Math.max(max, point.conversations), 0);
@@ -35,11 +36,11 @@ export function ConversationsChart({ data }: { data: DayCount[] }) {
     <div className="viz-root w-full">
       <style>{`
         .viz-root {
-          --series-1: #2a78d6;
-          --grid: #e1e0d9;
-          --axis-ink: #898781;
+          --series-1: #3f5d7d;
+          --grid: #e2e7ee;
+          --axis-ink: #5b6b80;
           --surface-1: #ffffff;
-          --tooltip-ink: #0b0b0b;
+          --tooltip-ink: #101826;
         }
         @media (prefers-color-scheme: dark) {
           :root:where(:not([data-theme="light"])) .viz-root {
@@ -51,11 +52,11 @@ export function ConversationsChart({ data }: { data: DayCount[] }) {
           }
         }
         :root[data-theme="dark"] .viz-root {
-          --series-1: #3987e5;
-          --grid: #2c2c2a;
-          --axis-ink: #898781;
-          --surface-1: #0a0a0a;
-          --tooltip-ink: #ffffff;
+          --series-1: #6f8cae;
+          --grid: #212c3a;
+          --axis-ink: #9aabbf;
+          --surface-1: #121a26;
+          --tooltip-ink: #eef2f7;
         }
       `}</style>
       <div className="h-64 w-full" data-testid="conversations-chart">

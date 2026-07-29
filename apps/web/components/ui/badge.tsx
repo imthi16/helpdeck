@@ -19,6 +19,10 @@ const badgeVariants = cva(
         ghost:
           "hover:bg-muted hover:text-muted-foreground dark:hover:bg-muted/50",
         link: "text-primary underline-offset-4 hover:underline",
+        // The two outcomes every answer resolves to, so status reads the same
+        // everywhere: a grounded reply, or a handoff to a person.
+        grounded: "bg-grounded/12 text-grounded",
+        handoff: "bg-handoff/12 text-handoff",
       },
     },
     defaultVariants: {

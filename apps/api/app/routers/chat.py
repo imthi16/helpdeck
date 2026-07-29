@@ -283,6 +283,9 @@ async def run_chat_stream(
                             "tokens_in": final.get("tokens_in"),
                             "tokens_out": final.get("tokens_out"),
                             "trace_id": turn.trace_id,
+                            # The line the answer was judged against — a bare
+                            # confidence number does not say which side it fell on.
+                            "threshold": deps.faithfulness_threshold,
                             "chunks": [
                                 {
                                     "n": c.get("n"),

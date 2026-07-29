@@ -14,7 +14,7 @@ function isActive(pathname: string, href: string): boolean {
 export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   return (
-    <nav className="flex flex-col gap-1 p-3" aria-label="Main">
+    <nav className="flex flex-col py-2" aria-label="Main">
       {NAV_ITEMS.map((item) => {
         const active = isActive(pathname, item.href);
         const Icon = item.icon;
@@ -25,14 +25,24 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
             onClick={onNavigate}
             aria-current={active ? "page" : undefined}
             className={cn(
-              "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+              // The current view is marked, not filled: a highlighter tick in the
+              // margin, the same gesture as a citation.
+              "group relative flex items-center gap-3 py-2.5 pl-5 pr-4 text-sm transition-colors",
+              "focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-mark",
               active
-                ? "bg-accent text-accent-foreground"
-                : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+                ? "text-rail-foreground"
+                : "text-rail-muted hover:bg-sidebar-accent hover:text-rail-foreground",
             )}
           >
-            <Icon className="size-4 shrink-0" />
-            {item.label}
+            <span
+              aria-hidden
+              className={cn(
+                "absolute left-0 top-1/2 h-6 w-[3px] -translate-y-1/2 rounded-r-sm transition-all",
+                active ? "bg-mark" : "bg-transparent group-hover:bg-rail-muted/40",
+              )}
+            />
+            <Icon className={cn("size-4 shrink-0", active && "text-mark")} />
+            <span className={cn(active && "font-medium")}>{item.label}</span>
           </Link>
         );
       })}
