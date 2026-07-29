@@ -344,3 +344,38 @@ the playground path end to end. The plan's *"shows a complete, costed trace tree
 needs real `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` (Cloud free tier) — no keys are
 available in this environment, so that eyeball check is outstanding and 6.1 stays unchecked
 until someone runs one playground turn against a real project.
+
+## Phase 6.2 — Golden dataset
+
+`eval/golden.jsonl`: **107 hand-written items** over the eight documents in
+`eval/fixtures/corpus` — 91 answerable, 16 unanswerable (15%). Schema per line:
+
+```json
+{"id": "g001", "question": "...", "ground_truth": "...",
+ "expected_doc_ids": ["returns"], "answerable": true, "tags": ["fast"]}
+```
+
+- **`expected_doc_ids` are corpus file stems** (`returns`, `descaling`, ...) because
+  `seed_corpus` titles each document `path.stem`. That keeps the file stable across re-seeds,
+  where document UUIDs change every time; 6.3 resolves slug → document by title.
+- **Coverage:** every document gets 10–15 questions (some items cite two docs, e.g. "does
+  skipping descaling void my warranty" → `descaling` + `warranty`). A document nobody asks
+  about is a retrieval blind spot the eval cannot see, so a test asserts full coverage.
+- **Unanswerable items are genuinely absent from the corpus** — prices, machine dimensions,
+  boiler wattage, voltage, colorways, phone support, a retail store, wholesale, barista
+  classes, data retention. Deliberately *not* used: "do you ship to Australia", which the
+  shipping policy does answer ("US, Canada, EU only"), so refusing it would be wrong.
+  Their `ground_truth` states the expected refusal and `expected_doc_ids` is empty.
+- **`tags: ["fast"]` marks the 30-item CI subset** for 6.4: 25 answerable spread across all
+  eight docs plus 5 refusals, so the gate can measure faithfulness, recall *and* refusal
+  accuracy on the subset.
+- **Not ported from `main`.** `main` also ships a `golden.jsonl`, but its corpus has since
+  grown to 17 documents; its items reference docs that do not exist on this branch, so
+  reusing it would have meant expected answers with no source text behind them.
+
+**Verify:** `apps/api/tests/test_golden_dataset.py` is the loader + schema check (parseable
+JSONL, unique ids and questions, doc slugs that exist, refusals with no doc ids, 10–20%
+unanswerable share, fast subset usable as a gate). The hand review was backed by a throwaway
+audit that scored every answerable ground truth's lexical overlap against its cited document
+and against every other document; six paraphrase-heavy items scored below 0.75 and were each
+re-read against the source text (all correct, cited doc still the best match).
