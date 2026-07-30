@@ -51,3 +51,44 @@ export function formatDay(day: string): string {
     day: "numeric",
   });
 }
+
+export interface QualityPoint {
+  day: string;
+  /** 0–1. */
+  faithfulness: number;
+  /** Answers scored that night. */
+  sample_size: number;
+}
+
+/**
+ * Latest online faithfulness for this org (plan 6.6).
+ *
+ * Every score is nullable: an org that has never been sampled has *no*
+ * measurement, which is not the same as having scored zero. The card must say
+ * "not measured yet" rather than render 0%, which reads as total failure.
+ */
+export interface QualitySummary {
+  latest_faithfulness: number | null;
+  latest_sample_size: number;
+  latest_at: string | null;
+  baseline_faithfulness: number | null;
+  delta: number | null;
+  alerted: boolean;
+  trend: QualityPoint[];
+}
+
+export function fetchQuality(points = 14): Promise<QualitySummary> {
+  return api<QualitySummary>(`/api/v1/analytics/quality?points=${points}`);
+}
+
+/** One decimal place: nightly faithfulness moves in fractions of a percent. */
+export function formatScore(fraction: number): string {
+  return `${(fraction * 100).toFixed(1)}%`;
+}
+
+/** Signed delta for the "vs previous" line, e.g. "+1.2 pts" / "−3.4 pts". */
+export function formatDelta(delta: number): string {
+  const points = delta * 100;
+  const sign = points >= 0 ? "+" : "−";
+  return `${sign}${Math.abs(points).toFixed(1)} pts`;
+}

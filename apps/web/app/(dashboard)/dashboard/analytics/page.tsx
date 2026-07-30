@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import { ConversationsChart } from "@/components/conversations-chart";
 import { PageHeader } from "@/components/page-header";
+import { QualityCard } from "@/components/quality-card";
 import { ThresholdGauge } from "@/components/threshold-gauge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,10 +19,12 @@ import {
 import {
   RANGES,
   fetchOverview,
+  fetchQuality,
   formatCount,
   formatDay,
   formatPercent,
   type AnalyticsOverview,
+  type QualitySummary,
   type RangeDays,
 } from "@/lib/analytics";
 
@@ -73,6 +76,8 @@ export default function AnalyticsPage() {
   const [data, setData] = useState<AnalyticsOverview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showTable, setShowTable] = useState(false);
+  const [quality, setQuality] = useState<QualitySummary | null>(null);
+  const [qualityLoading, setQualityLoading] = useState(true);
 
   useEffect(() => {
     let active = true;
@@ -87,6 +92,26 @@ export default function AnalyticsPage() {
       active = false;
     };
   }, [days]);
+
+  // Separate from the overview fetch, and deliberately not gated on it: quality
+  // comes from nightly eval_runs rather than from the conversation tables, so the
+  // range selector does not apply and a failure here must not blank the page.
+  useEffect(() => {
+    let active = true;
+    fetchQuality()
+      .then((summary) => {
+        if (active) setQuality(summary);
+      })
+      .catch(() => {
+        if (active) setQuality(null);
+      })
+      .finally(() => {
+        if (active) setQualityLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   return (
     <div className="mx-auto max-w-5xl">
@@ -188,6 +213,10 @@ export default function AnalyticsPage() {
           )}
         </CardContent>
       </Card>
+
+      <div className="mt-6">
+        <QualityCard quality={quality} loading={qualityLoading} />
+      </div>
 
       <Card className="mt-6">
         <CardHeader>

@@ -648,3 +648,46 @@ the serving gate is systematically harsher than an independent judge, and
 `faithfulness_threshold=0.4` is discarding answers that are in fact fully grounded.
 `mean_confidence_gap()` exposes this deliberately, since it is the number that should
 drive re-tuning the gate.
+
+## Phase 6.6 — Surfacing the scores
+
+**Half of this was already built.** The playground debug panel already showed
+per-answer faithfulness — `debug.confidence` rendered against the escalation
+threshold on a `ThresholdGauge`, which is exactly what 6.6 asks for. It arrived with
+earlier playground work, so the only real gap was the Analytics card.
+
+`GET /api/v1/analytics/quality` serves the latest online run plus a 14-point trend,
+from the `eval_runs` rows 6.5 writes. Only `kind='online'` rows: RLS already hides
+golden runs from a tenant, but the filter is explicit as well, because "this org has
+no rows yet" and "this org may not see those rows" should not share a code path.
+Charting the two kinds on one axis would also invent a trend out of a methodology
+change — online faithfulness is scored against cited chunks only and is a
+conservative lower bound.
+
+Three things the card refuses to do, each a way a quality number can mislead:
+
+- **Never render a missing measurement as 0%.** An org that has never been sampled
+  has no score; 0% reads as "every answer is a hallucination". It says "Not measured
+  yet" and explains that sampling only scores answers that cite sources — so an
+  empty card does not read as a broken one.
+- **Never show a score without its denominator.** 100% from two answers and 100%
+  from eighty are very different claims, so the sample size travels with the score.
+- **Never draw a trend through one point.** A single datapoint has no direction, and
+  a flat line implies a stability nobody measured. The sparkline needs two.
+
+The sparkline uses bars rather than a line, because nightly samples are discrete
+measurements and a line would imply values between them that were never taken, and
+scales from 0.5 rather than 0 so ordinary movement is legible.
+
+**The Playwright harness had the conftest bug too.** Its `webServer` env never
+blanked provider keys, and the specs assert on offline-stub behaviour — so once
+`GEMINI_API_KEY` landed in `apps/api/.env`, e2e would have quietly issued real,
+billed, rate-limited calls and asserted against a live model. The env now pins the
+AI stack to the stubs exactly as `tests/conftest.py` does. Same latent bug, second
+harness; worth checking anywhere else that boots the API with an inherited env.
+
+**Verify:** two Playwright tests in a real browser — a fresh org shows "Not measured
+yet" with no score element, and a stubbed API response renders 92.3%, "27 answers
+scored", the −2.8 pts delta and the regression flag. Correctness against real data is
+covered separately: `quality_summary` reads the row 6.5 actually wrote (1.0 from 5
+answers, no baseline, one trend point).

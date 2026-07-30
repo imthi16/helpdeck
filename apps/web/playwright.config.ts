@@ -33,6 +33,15 @@ export default defineConfig({
         STORAGE_DIR: ".e2e-storage",
         // Invite links must point at the test dashboard, not the dev one.
         WEB_APP_URL: WEB_URL,
+        // Pin the AI stack to the offline stubs, exactly as tests/conftest.py does.
+        // These specs assert on stub behaviour ("the offline model stub can ground
+        // an answer here"), so a provider key left in apps/api/.env would make them
+        // issue real, billed, rate-limited calls and assert against a live model.
+        // An empty OLLAMA_BASE_URL reads as unreachable.
+        OLLAMA_BASE_URL: "",
+        ANTHROPIC_API_KEY: "",
+        OPENAI_API_KEY: "",
+        GEMINI_API_KEY: "",
       },
     },
     {

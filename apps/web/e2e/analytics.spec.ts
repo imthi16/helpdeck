@@ -54,4 +54,50 @@ test("analytics reflects real traffic, not placeholders", async ({ page }) => {
   // Range filters re-query.
   await page.getByTestId("range-7").click();
   await expect(page.getByText("Last 7 days")).toBeVisible();
+
+  // Quality card (6.6). A fresh org has never been sampled by the nightly job, so
+  // it must say so rather than render 0% — which would read as "every answer is a
+  // hallucination" on an org whose answers were never scored at all.
+  await expect(page.getByTestId("quality-card")).toBeVisible();
+  await expect(page.getByTestId("quality-card")).toContainText("Not measured yet");
+  await expect(page.getByTestId("quality-score")).toHaveCount(0);
+});
+
+test("the quality card shows the latest nightly score", async ({ page }) => {
+  await signUpAndSeedText(
+    page,
+    "Descaling Guide",
+    "# Descaling\n\nDescale the machine every three months with normal use.",
+    "quality",
+  );
+
+  // Stub the endpoint rather than wait for a real nightly run: this asserts the
+  // card renders what the API returns, which is the part of 6.6 that lives here.
+  // The service's own correctness against eval_runs is covered by pytest.
+  await page.route("**/api/v1/analytics/quality*", async (route) => {
+    await route.fulfill({
+      json: {
+        latest_faithfulness: 0.923,
+        latest_sample_size: 27,
+        latest_at: "2026-07-29T03:15:00Z",
+        baseline_faithfulness: 0.951,
+        delta: -0.028,
+        alerted: true,
+        trend: [
+          { day: "2026-07-27", faithfulness: 0.95, sample_size: 20 },
+          { day: "2026-07-28", faithfulness: 0.95, sample_size: 24 },
+          { day: "2026-07-29", faithfulness: 0.923, sample_size: 27 },
+        ],
+      },
+    });
+  });
+
+  await page.goto("/dashboard/analytics");
+
+  await expect(page.getByTestId("quality-score")).toHaveText("92.3%");
+  // The denominator travels with the score: 92.3% from 27 answers is a different
+  // claim from 92.3% from two.
+  await expect(page.getByTestId("quality-card")).toContainText("27 answers scored");
+  await expect(page.getByTestId("quality-delta")).toContainText("2.8 pts");
+  await expect(page.getByTestId("quality-alert")).toBeVisible();
 });
