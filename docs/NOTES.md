@@ -379,3 +379,89 @@ unanswerable share, fast subset usable as a gate). The hand review was backed by
 audit that scored every answerable ground truth's lexical overlap against its cited document
 and against every other document; six paraphrase-heavy items scored below 0.75 and were each
 re-read against the source text (all correct, cited doc still the best match).
+
+## Phase 6.3 — RAGAS runner
+
+`eval/run_eval.py` scores `eval/golden.jsonl` through **the real pipeline** —
+`app.agent.runner.run_turn`, the same graph the chat endpoint serves. Nothing is stubbed,
+so a regression in the router, retrieval, the grounded prompt or the gate shows up here.
+Metrics live in `app/services/evaluation/`, a JSON report goes to `eval/reports/`
+(gitignored), and one row goes to `eval_runs`.
+
+- **Our own RAGAS-style metrics, not the `ragas` package.** Every LLM/embedding call has to
+  go through `app/services/llm.py` to be gateway-routed and Langfuse-traced, which `ragas`
+  will not do. Retrieval metrics use the golden set's `expected_doc_ids` rather than an LLM
+  relevance opinion — relevance is a fact about the corpus, so a label beats a judgement.
+  Report wording says *"RAGAS-style"*, never *"scored by RAGAS"*.
+- **`run_turn` takes an optional `conversation_id`.** Scoring 107 items used to mean 107
+  synthetic conversations and their escalations in the demo org's inbox; with no
+  conversation in state the `escalate` node skips its write. A test asserts a run leaves
+  zero rows behind.
+- **`eval_runs` is a system table** — no `org_id`, no RLS, app role gets SELECT only,
+  following the `audit_logs` precedent. 6.5 adds org scoping when it starts judging real
+  per-tenant traffic.
+
+### The judge has to be the strong model
+
+Both bugs below were found by running against real Ollama models; the offline stub is
+lexical and hides them.
+
+1. **`parse_verdicts` was last-write-wins.** Verdicts went into a dict keyed by claim
+   number, so a judge that emits two lines for one claim silently overwrote its own
+   ruling. `llama3.2:3b` answers `"1: yes\n1: no"` to a single claim, and the stray `no`
+   stuck. Now `setdefault` — first ruling wins, matching the prompt's "one line per claim,
+   in order". This would bite with any repetitive judge, not just a small one.
+2. **The entailment call ran on `LLMRoute.cheap`.** The pipeline's in-line faithfulness gate
+   is cheap because a user is waiting. Nobody waits on an eval, and a judge too weak for
+   the task does not add noise — it adds *bias*, all of it toward false "unsupported", which
+   reads as hallucination in the report. `JUDGE_ROUTE = LLMRoute.strong`, overridable per
+   call and via `--judge-route`.
+
+Measured on the 30-item fast subset, same pipeline, same corpus, judge swapped:
+
+| judge | faithfulness | answer_relevancy |
+|---|---|---|
+| `llama3.2:3b` (before) | 0.611 | 0.757 |
+| `qwen2.5:7b` (after) | **1.000** | 0.783 |
+
+The 3B judge scored *"the return window is 30 days from the date the carrier marks the
+package as delivered"* — stated almost verbatim in `returns.md` — as unsupported.
+
+**A 1.0 is only meaningful if the metric can fail**, so the judge was checked against
+planted claims: grounded → 1.00, fabricated ("returns accepted for a full ninety days")
+→ 0.00, mixed → 0.50. It discriminates; the 1.0 is real. Reproduce with a few lines
+against `metrics.faithfulness` — it is not a unit test because it needs a live model.
+
+`environment.judge_model` is now in every report and `eval_runs` row. Without it two runs
+are not comparable, and the pre-fix reports are silently unlabelled on exactly that axis.
+
+**Cheap is not faster here.** The strong-judge fast run took 1486s against 2028s for the
+cheap-judge one: alternating 3B and 7B forces Ollama to swap weights, and keeping most
+calls on one model beats the smaller model's per-token speed.
+
+### What the numbers say about the pipeline (not the harness)
+
+Real-model fast subset: faithfulness 1.000, context_recall 0.840, refusal_accuracy 1.000,
+**false_refusal_rate 0.400**, escalation_rate 0.500. The pipeline is very conservative — it
+refuses half the set, and what survives is correct. Two distinct causes, both **pipeline
+issues outside 6.3's scope**, to weigh before 6.4 sets its thresholds:
+
+- **4 of 25 answerable items retrieve nothing relevant** (recall 0.0): `g050`, `g051`
+  ("my machine will not turn on", "my shots pour fast and taste weak") plus `g075`, `g088`.
+  Symptom-phrased questions do not match `troubleshooting.md`'s wording — a genuine hybrid
+  retrieval gap, and the strongest argument for turning on a reranker.
+- **5 more are killed by the pipeline's own gate despite perfect recall** — `g019`, `g038`,
+  `g064`, `g077`, `g085` came back cited and correct, scored 0.0–0.33 by the in-line
+  `llama3.2:3b` judge, and escalated under `faithfulness_threshold=0.4`. That is the *same*
+  weak-judge failure fixed above, still live in the serving path where the cheap route is
+  the right call for latency. Worth revisiting: a better cheap judge, a lower threshold, or
+  a two-stage gate.
+
+So 6.4's gate would pass faithfulness and refusal-accuracy comfortably and fail on nothing,
+but a `false_refusal_rate` this high is the real quality story and deserves its own
+threshold — refusing everything trivially aces `refusal_accuracy`.
+
+**Verify:** full 107-item run against the seeded demo org with real models, zero errors,
+report written and `eval_runs` row recorded. Numbers above come from `LiteLLMProvider` +
+Ollama; the offline stub run is labelled `OfflineGroundedProvider` and the summary prints a
+warning that those numbers validate the harness only and are not a quality claim.

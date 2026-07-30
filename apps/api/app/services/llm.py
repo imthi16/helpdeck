@@ -166,10 +166,18 @@ class OfflineGroundedProvider:
     first sentence and a ``[n]`` citation — or refuses when nothing overlaps, so
     out-of-KB questions produce a genuine refusal. For routing it returns a
     keyword-matched label; for judging it returns a support score.
+
+    It also answers the two evaluator prompts (per-claim verdicts, reverse
+    question generation) so an eval run produces scores with no model server. The
+    verdicts are the same lexical-overlap heuristic used everywhere else here: a
+    claim with no support in the context genuinely scores unsupported.
     """
 
     ROUTER_MARKER = "Classify the user request"
     JUDGE_MARKER = "faithfulness"
+    # Markers for app/services/evaluation/prompts.py — keep both in sync.
+    VERDICT_MARKER = "whether each claim is supported"
+    QUESTION_GEN_MARKER = "generate questions"
 
     async def complete(
         self, model: str, messages: list[LLMMessage], **kwargs: Any
@@ -187,10 +195,15 @@ class OfflineGroundedProvider:
     def _respond(self, messages: list[LLMMessage]) -> str:
         system = next((m.content for m in messages if m.role == "system"), "")
         user = next((m.content for m in reversed(messages) if m.role == "user"), "")
+        lowered_system = system.lower()
 
-        if self.JUDGE_MARKER in system.lower():
+        if self.VERDICT_MARKER in lowered_system:
+            return self._verdicts(user)
+        if self.QUESTION_GEN_MARKER in lowered_system:
+            return self._questions(user)
+        if self.JUDGE_MARKER in lowered_system:
             return self._judge(user)
-        if self.ROUTER_MARKER.lower() in system.lower():
+        if self.ROUTER_MARKER.lower() in lowered_system:
             return self._route(user)
         return self._answer(user)
 
@@ -206,6 +219,34 @@ class OfflineGroundedProvider:
         # Supported when the answer's cited passages overlap the answer content.
         answer = user.split("Answer:", 1)[-1]
         return "1.0" if re.search(r"\[\d+\]", answer) else "0.0"
+
+    def _verdicts(self, user: str) -> str:
+        """One ``n: yes|no`` line per claim, by lexical support in the context.
+
+        A claim counts as supported when most of its content words appear in the
+        passages the answer was allowed to see — the offline analogue of an
+        entailment check, and enough to catch a claim invented out of thin air.
+        """
+        context, _, claims_block = user.partition("Claims:")
+        context_words = _content_words(context)
+        lines: list[str] = []
+        for line in claims_block.strip().splitlines():
+            number, _, claim = line.partition(":")
+            claim_words = _content_words(claim or line)
+            if not claim_words:
+                continue
+            overlap = len(claim_words & context_words) / len(claim_words)
+            lines.append(f"{number.strip()}: {'yes' if overlap >= 0.6 else 'no'}")
+        return "\n".join(lines)
+
+    def _questions(self, user: str) -> str:
+        """Echo the answer back as the question it responds to.
+
+        Degenerate on purpose: without a model there is nothing to paraphrase
+        with, so offline answer-relevancy reduces to question/answer lexical
+        similarity. Labelled as such in the eval report.
+        """
+        return user.split("Answer:", 1)[-1].strip()
 
     def _answer(self, user: str) -> str:
         question = user.split("Question:", 1)[-1] if "Question:" in user else user
@@ -258,6 +299,12 @@ class LLMGateway:
         self._provider = provider or _default_provider()
         self._cheap_model = cheap_model or settings.llm_cheap_model or "ollama_chat/llama3.2:3b"
         self._strong_model = strong_model or settings.llm_strong_model or "ollama_chat/qwen2.5:7b"
+
+    @property
+    def provider_name(self) -> str:
+        """Which backend is answering — the eval report labels runs with this, so
+        offline-stub scores are never mistaken for real model scores."""
+        return type(self._provider).__name__
 
     def model_for(self, route: LLMRoute) -> str:
         return self._strong_model if route == LLMRoute.strong else self._cheap_model

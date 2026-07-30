@@ -46,3 +46,6 @@ storage/
 # E2E ingest storage
 apps/api/.e2e-storage/
 apps/api/.e2e-widget-storage/
+
+# Eval reports (one JSON per run; eval_runs is the durable record)
+eval/reports/

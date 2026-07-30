@@ -36,15 +36,20 @@ async def run_turn(
     deps: AgentDependencies,
     *,
     org_id: uuid.UUID,
-    conversation_id: uuid.UUID,
     question: str,
+    conversation_id: uuid.UUID | None = None,
     checkpointer: Any = None,
 ) -> AgentState:
+    """Run one turn. ``conversation_id`` is optional so the eval harness (6.3) can
+    exercise the real graph without writing conversations or escalations: with no
+    conversation in state the ``escalate`` node skips its DB write.
+    """
     graph = build_agent_graph(deps, checkpointer=checkpointer)
-    initial: AgentState = {
-        "org_id": str(org_id),
-        "conversation_id": str(conversation_id),
-        "question": question,
-    }
-    config = {"configurable": {"thread_id": str(conversation_id)}}
+    initial: AgentState = {"org_id": str(org_id), "question": question}
+    if conversation_id is not None:
+        initial["conversation_id"] = str(conversation_id)
+    # Threads are per conversation; an anonymous turn gets a throwaway thread so
+    # concurrent eval items can never share checkpointed state.
+    thread_id = str(conversation_id) if conversation_id is not None else str(uuid.uuid4())
+    config = {"configurable": {"thread_id": thread_id}}
     return await graph.ainvoke(initial, config=config)

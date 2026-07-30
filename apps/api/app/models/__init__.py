@@ -9,6 +9,7 @@ from app.models.conversation import (
     Message,
     MessageRole,
 )
+from app.models.evaluation import EvalRun, EvalRunKind
 from app.models.knowledge import (
     Chunk,
     Document,
@@ -40,6 +41,8 @@ __all__ = [
     "DocumentStatus",
     "Escalation",
     "EscalationStatus",
+    "EvalRun",
+    "EvalRunKind",
     "Invitation",
     "Membership",
     "MembershipRole",
