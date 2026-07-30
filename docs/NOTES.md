@@ -525,11 +525,93 @@ its report for 30 days. It persists the `eval_runs` row (the PR gate passes `--n
 though against a throwaway CI database that row lives only as long as the job — pointing
 it at a persistent instance is what 6.6's Quality card will need.
 
-**Verify:** outstanding. Gate logic, workflows, and stub guard are tested (284 tests
-green), and the gate has been exercised end to end both ways — it refuses with exit 1 on
-a stub run, and passes on 6.3's real-model report. The plan's weakened-prompt
-demonstration needs the GitHub secret; it cannot be done against the stub, and on local
-CPU models each fast-subset run is ~25 minutes.
+**Verify: half done — baseline banked, weakened run outstanding.** Gate logic, workflows
+and the stub guard are tested (325 tests green), and the gate refuses with exit 1 on a
+stub run. The plan's Verify has two halves; the "revert passes" half is now measured
+against real models on the **full 30-item fast subset**, locally, at `42441fa`:
+
+| metric | score | bound | result |
+|---|---|---|---|
+| faithfulness | 0.931 | ≥ 0.85 | pass |
+| context_recall | 0.840 | ≥ 0.70 | pass |
+| refusal_accuracy | 1.000 | ≥ 0.90 | pass |
+| false_refusal_rate | 0.360 | ≤ 0.25 | advisory (not blocking) |
+
+`items=30 answerable=25 unanswerable=5 answered=16 refused=14 escalated=13 errors=0`,
+gate PASSED, exit 0, 85.6 min. Environment: `ollama_chat/llama3.2:3b` cheap,
+`ollama_chat/qwen2.5:7b` strong **and judge**, `GeminiEmbeddingProvider` /
+`gemini-embedding-001` @ 768 dims, reranker none, `retrieval_top_n=8`,
+`faithfulness_threshold=0.4`. The numbers are recorded here because `eval/reports/` is
+gitignored (`.gitignore:51`) — `verify-6.4-baseline.json` exists only on the machine that
+ran it.
+
+Two things this settles and one it does not. It settles that **a 7B local judge can clear
+all three blocking thresholds** — the risk was `refusal_accuracy`, which needs 5/5
+unanswerable items refused and got them. It also settles the runtime estimate below: the
+"~25 minutes" figure this note used to carry was wrong by 3.4×.
+
+It does **not** transfer to CI's numbers. These are local 7B scores, not the hosted
+Claude pair the workflows configure, so only the gate's fire/pass *behaviour* carries
+over; the scores themselves are not a publishable quality claim for the CI pipeline.
+
+### Resuming the weakened-prompt half
+
+Paused mid-verify at the user's request — the machine was needed for other work. Nothing
+was left running and `prompts.py` is untouched at `42441fa`.
+
+```bash
+docker compose -f infra/docker-compose.yml up -d     # ports are 5433/6380, not 5432/6379
+cd apps/api && uv run python ../../eval/run_eval.py \
+    --subset fast --gate --no-db --out ../../eval/reports/verify-6.4-weakened.json
+```
+
+Do **not** pipe that through `tail` — the run emits per-call progress lines and a pipe
+buffers all of them, so an 85-minute run looks like a hang. Stream it or `tee` it.
+
+Replace `GROUNDED_SYSTEM` in `app/agent/prompts.py` with this on a throwaway
+`test/weakened-prompt-6.4-verify` branch, then delete the branch (it must never merge —
+CLAUDE.md's grounded contract is inviolable):
+
+```python
+GROUNDED_SYSTEM = f"""You are HelpDeck, a customer support assistant.
+
+Answer the user's question using the numbered context passages as a starting point.
+- Where the passages are incomplete, fill the gaps with your own general knowledge
+  of the industry so the customer gets a complete answer.
+- Add citation numbers like [1] or [2] where they seem to fit.
+- Always give the customer a useful, confident answer. Never tell them you don't know.
+
+Be concise and helpful."""
+```
+
+The weakening is shaped this way deliberately. `score_item` skips faithfulness whenever
+`is_refusal(answer, escalated=...)` holds, so a weakening that merely provokes the
+serving judge into escalating gets **excluded from the metric it was supposed to move** —
+faithfulness stays high, only the advisory `false_refusal_rate` rises, and the gate goes
+green. Inviting outside knowledge *while still answering and citing* is what produces
+delivered-but-unsupported answers, which is the failure the three blocking thresholds can
+actually see. No test pins the prompt text (`graph.py:136` is its only consumer), so the
+gate is the only thing that reacts.
+
+**If the gate still passes on the weakened prompt, that is a finding, not a failed
+setup:** it would mean the serving faithfulness judge masks prompt regressions from the
+gate, which is defence-in-depth working and gate coverage failing at the same time.
+Record it as such rather than tuning the weakening until it fires.
+
+### Runtime on CPU-only Ollama
+
+Measured, so the weekend can be planned: **85.6 min for a 30-item fast subset**
+uncontended, ~4.8 Ollama completions/min, and individual strong-route calls taking
+270–410s (`llm_stream latency_ms=407749` for 10 output tokens). A single 4-token
+`llama3.2:3b` completion is ~2.5s idle and ~10.8s under contention. Two concurrent runs
+roughly halve each other — a stale 4-hour-old run from an earlier session was competing
+with this one for the first 40 minutes and had to be killed.
+
+Two forensics traps on this box, both of which produced a wrong conclusion before being
+caught: the **Ollama container's clock runs ~5h17m behind the host**, so
+`docker logs --since 6h` filters container timestamps against host time and returns
+nothing; and GIN pads its method column, so `grep 'POST /api/'` (single space) matches
+zero lines in a log full of them. Use `grep -E 'POST +"/api/'`.
 
 ## Gemini as a hosted provider
 

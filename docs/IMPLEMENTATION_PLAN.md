@@ -7,16 +7,22 @@
 
 ## Status
 
-- **Current phase:** 6 (6.2, 6.3, 6.5, 6.6 done; 6.1 and 6.4 code complete, awaiting credentials)
+- **Current phase:** 6 (6.2, 6.3, 6.5, 6.6 done; 6.1 and 6.4 code complete, Verify outstanding)
 - **Last updated:** 2026-07-30
 - **Blockers:** 6.1's Verify (a costed trace tree visible in Langfuse) needs
   `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY`; none available in this environment.
-- **6.4 code complete, Verify outstanding.** Gate logic, both CI workflows and the
-  stub guard are committed and tested. The Verify (a weakened prompt fails the gate)
-  needs `ANTHROPIC_API_KEY` as a GitHub secret — the gate scores the real pipeline and
-  refuses to run on the offline stub by design. `false_refusal_rate` ships advisory,
-  not blocking, at 0.25: 6.3 measured 0.40, so gating on it would fail every PR until
-  retrieval and the serving gate improve. See `docs/NOTES.md` (Phase 6.4).
+- **6.4 Verify half done, paused for machine time.** The "revert passes" half is
+  measured: the full 30-item fast subset passes all three blocking thresholds against
+  real models locally (faithfulness 0.931, context_recall 0.840, refusal_accuracy 1.000;
+  `false_refusal_rate` 0.360 advisory), 0 errors, 85.6 min on CPU-only Ollama with Gemini
+  embeddings. The weakened-prompt half is **not** run — deferred to a weekend window when
+  the server is free, since each run is ~85 min here, not the ~25 min previously assumed.
+  Resume recipe, the exact weakened prompt, and why it is shaped that way: `docs/NOTES.md`
+  (Phase 6.4). Note these are local 7B scores, not the hosted-Claude numbers CI would
+  produce — only the gate's fire/pass behaviour transfers.
+  `false_refusal_rate` ships advisory, not blocking, at 0.25: 6.3 measured 0.40 and this
+  run 0.36, so gating on it would fail every PR until retrieval and the serving gate
+  improve.
 
 ---
 
