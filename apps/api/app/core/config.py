@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     # keep the app runnable (not real models).
     anthropic_api_key: str = ""
     openai_api_key: str = ""
+    # Gemini is the one hosted provider that serves both chat and a 768-dim
+    # embedding model (gemini-embedding-001 with outputDimensionality=768), so it
+    # can back the whole pipeline without touching the chunks.embedding width.
+    gemini_api_key: str = ""
     ollama_base_url: str = "http://localhost:11434"
     embedding_model: str = "ollama/nomic-embed-text"
     # Must match EMBEDDING_MODEL's output width (nomic-embed-text = 768).

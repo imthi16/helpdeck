@@ -530,3 +530,64 @@ green), and the gate has been exercised end to end both ways — it refuses with
 a stub run, and passes on 6.3's real-model report. The plan's weakened-prompt
 demonstration needs the GitHub secret; it cannot be done against the stub, and on local
 CPU models each fast-subset run is ~25 minutes.
+
+## Gemini as a hosted provider
+
+`GEMINI_API_KEY` now selects Gemini for both chat (`gemini/<model>` via litellm) and
+embeddings. It is the only hosted provider that covers **both**, and the only one
+whose embedding width can be asked for: `gemini-embedding-001` defaults to 3072 dims
+but honours `outputDimensionality`, so requesting 768 keeps vectors compatible with
+the `chunks.embedding` column. OpenAI's 1536 would need a migration.
+
+`GeminiEmbeddingProvider` asserts the returned width and raises rather than letting a
+mismatch reach the INSERT, where pgvector's error names no cause.
+
+**Gemini embeddings measurably beat local nomic-embed-text** on the same corpus and
+questions: context_precision 0.917 vs 0.688, answer_relevancy 0.871 vs 0.783. A
+re-seed takes ~13s against ~90s. Embeddings are pure upside.
+
+### Free-tier generation quota makes Gemini unusable for the eval
+
+Generation quota is metered **per model per day** (`GenerateRequestsPerDayPerProject
+PerModel-FreeTier`) with caps that vary by two orders of magnitude:
+
+| model | free daily cap |
+|---|---|
+| `gemini-3.5-flash` | **20** |
+| `gemini-3.6-flash` | **20** |
+| `gemini-3.1-flash-lite` | 500 |
+
+The 30-item fast subset needs ~60 strong-route calls and the full set ~160, so **no
+capable Gemini model can serve the eval on a free key**. Only the flash-lite tier has
+the headroom, and using a lite model as the judge would reintroduce precisely the
+weak-judge bias 6.3 diagnosed and fixed. Both CI workflows therefore need **paid**
+Gemini quota; they fail loudly rather than silently degrading.
+
+Local dev meanwhile runs a hybrid: Gemini embeddings, Ollama generation. Provider
+selection is global rather than per-route, but this combination still works because
+litellm's `ollama_chat` defaults to localhost and ignores the irrelevant `api_key` —
+so a hosted key does not force hosted generation.
+
+### Three bugs the switch exposed
+
+1. **`conftest.py` did not isolate tests from hosted providers.** It blanked
+   `OLLAMA_BASE_URL` and claimed "no provider key is set", but nothing set the keys —
+   true only because none existed. A key in `apps/api/.env` made the whole suite issue
+   real, billed, rate-limited API calls (200s → over 600s) and silently voided the
+   "deterministic, never depends on a live model server" guarantee. Now every provider
+   key is blanked explicitly. An `ANTHROPIC_API_KEY` would have done the same.
+2. **`score_item` guarded only `run_turn`, not the metric calls.** Scoring calls a
+   model too, so it fails the same ways — a 429 on exhausted quota, a 503 under load —
+   and those escaped the per-item `except` and aborted the whole run, discarding every
+   item already scored. The intent ("one bad item must not void the run") now covers
+   scoring as well.
+3. **`mean([])` returned 0.0, so an unmeasured metric read as a failing score.** A
+   subset with no unanswerable items has *undefined* refusal accuracy; reporting 0.000
+   made the gate say "out-of-KB questions must be refused" about a run that asked
+   none. `mean_or_none` distinguishes the two and both the summary and the gate now
+   render "not measured". It still fails the gate — you cannot certify what you did
+   not measure — but for an honest reason.
+
+`LiteLLMProvider` also gained retry-with-backoff for transient upstream failures (429
+and 503), preferring the provider's own `retry in Ns` hint and refusing to honour a
+multi-hour one, which means an exhausted daily quota fails fast instead of sleeping.

@@ -2,6 +2,9 @@
 # subset for speed; this scores all 107 and records the row that 6.6's Quality
 # card reads, so the in-product trend line comes from the full set rather than
 # from whichever subset a PR happened to run.
+#
+# Needs paid Gemini quota: ~535 generation calls, against a free-tier cap of 20/day
+# per capable model. See docs/NOTES.md, Phase 6.4.
 name: Eval (nightly)
 
 on:
@@ -40,10 +43,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Require the API key
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          if [ -z "$ANTHROPIC_API_KEY" ]; then
-            echo "::error::ANTHROPIC_API_KEY secret is not set; the nightly eval cannot"
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "::error::GEMINI_API_KEY secret is not set; the nightly eval cannot"
             echo "::error::run against the offline stub — a stub run always looks healthy."
             exit 1
           fi
@@ -69,23 +72,14 @@ jobs:
             END IF;
           END
           \$\$;"
-      # See the PR gate for why embeddings are local: Anthropic serves no embedding
-      # model, and the silent fallback is the hashing stub.
-      - name: Start Ollama for embeddings only
-        run: |
-          curl -fsSL https://ollama.com/install.sh | sh
-          ollama serve &
-          for _ in $(seq 1 30); do
-            curl -sf http://localhost:11434/api/tags >/dev/null && break
-            sleep 1
-          done
-          ollama pull nomic-embed-text
       - name: Migrate and seed
         working-directory: apps/api
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          LLM_CHEAP_MODEL: anthropic/claude-haiku-4-5
-          LLM_STRONG_MODEL: anthropic/claude-opus-5
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          LLM_CHEAP_MODEL: gemini/gemini-3.1-flash-lite
+          LLM_STRONG_MODEL: gemini/gemini-3.5-flash
+          EMBEDDING_MODEL: gemini/gemini-embedding-001
+          EMBEDDING_DIMS: "768"
         run: |
           uv run alembic upgrade head
           uv run python scripts/seed.py
@@ -95,9 +89,11 @@ jobs:
       - name: Full golden set
         working-directory: apps/api
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          LLM_CHEAP_MODEL: anthropic/claude-haiku-4-5
-          LLM_STRONG_MODEL: anthropic/claude-opus-5
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          LLM_CHEAP_MODEL: gemini/gemini-3.1-flash-lite
+          LLM_STRONG_MODEL: gemini/gemini-3.5-flash
+          EMBEDDING_MODEL: gemini/gemini-embedding-001
+          EMBEDDING_DIMS: "768"
         run: uv run python ../../eval/run_eval.py --subset full --gate
       - uses: actions/upload-artifact@v4
         if: always()

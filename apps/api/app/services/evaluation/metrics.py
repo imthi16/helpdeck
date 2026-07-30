@@ -215,3 +215,14 @@ def is_refusal(answer: str, *, escalated: bool) -> bool:
 
 def mean(values: Sequence[float]) -> float:
     return sum(values) / len(values) if values else 0.0
+
+
+def mean_or_none(values: Sequence[float]) -> float | None:
+    """Mean, or None when there was nothing to average.
+
+    Distinct from ``mean`` because 0.0 and "not measured" mean opposite things to a
+    gate: a subset with no unanswerable items has an *undefined* refusal accuracy,
+    and reporting it as 0.0 reads as "refused nothing" — a failure the run never
+    tested for.
+    """
+    return sum(values) / len(values) if values else None

@@ -84,7 +84,8 @@ class EvalReport:
     item_count: int
     started_at: str
     duration_ms: int
-    metrics: dict[str, float]
+    #: None for a metric whose population was empty — "not measured", never 0.0.
+    metrics: dict[str, float | None]
     counts: dict[str, int]
     environment: dict[str, Any]
     git_sha: str | None
@@ -272,13 +273,21 @@ async def score_item(
             # Only a real answer can be unfaithful or irrelevant; scoring a
             # refusal here would punish the pipeline for behaving correctly.
             answer_text = state.get("answer") or result.answer
-            faith = await m.faithfulness(deps.gateway, answer_text, chunks, route=judge_route)
-            result.faithfulness = faith.score
-            result.claim_count = len(faith.claims)
-            result.supported_claim_count = faith.supported_count
-            result.answer_relevancy = await m.answer_relevancy(
-                deps.gateway, embedding_service, item.question, answer_text, route=judge_route
-            )
+            # Scoring calls a model too, so it fails the same ways the pipeline does
+            # (a 429 on an exhausted quota, a 503 under load). This needs its own
+            # guard: without it a metric failure escapes the per-item except above
+            # and aborts the whole run, losing every item already scored.
+            try:
+                faith = await m.faithfulness(deps.gateway, answer_text, chunks, route=judge_route)
+                result.faithfulness = faith.score
+                result.claim_count = len(faith.claims)
+                result.supported_claim_count = faith.supported_count
+                result.answer_relevancy = await m.answer_relevancy(
+                    deps.gateway, embedding_service, item.question, answer_text, route=judge_route
+                )
+            except Exception as exc:  # noqa: BLE001 - one bad item must not void the run
+                result.error = f"scoring failed: {type(exc).__name__}: {exc}"
+                logger.warning("eval_item_scoring_failed", item_id=item.id, error=result.error)
 
         trace.update(
             output={"answer": result.answer, "refused": result.refused},
@@ -300,7 +309,9 @@ async def score_item(
     return result
 
 
-def aggregate(items: Sequence[EvalItemResult]) -> tuple[dict[str, float], dict[str, int]]:
+def aggregate(
+    items: Sequence[EvalItemResult],
+) -> tuple[dict[str, float | None], dict[str, int]]:
     """Aggregate per-item scores, averaging each metric only over applicable items."""
     answerable = [i for i in items if i.answerable]
     unanswerable = [i for i in items if not i.answerable]
@@ -311,20 +322,23 @@ def aggregate(items: Sequence[EvalItemResult]) -> tuple[dict[str, float], dict[s
             value for i in population if (value := getattr(i, attr)) is not None and i.error is None
         ]
 
+    # mean_or_none throughout: every one of these averages over a population that a
+    # subset can leave empty, and None ("not measured") must not be reported as 0.0
+    # ("measured, scored zero") — the gate treats the two very differently.
     metrics = {
-        "faithfulness": m.mean(collect("faithfulness", items)),
-        "answer_relevancy": m.mean(collect("answer_relevancy", items)),
-        "context_precision": m.mean(collect("context_precision", answerable)),
-        "context_recall": m.mean(collect("context_recall", answerable)),
+        "faithfulness": m.mean_or_none(collect("faithfulness", items)),
+        "answer_relevancy": m.mean_or_none(collect("answer_relevancy", items)),
+        "context_precision": m.mean_or_none(collect("context_precision", answerable)),
+        "context_recall": m.mean_or_none(collect("context_recall", answerable)),
         # The refusal pair reads as a trade-off: refusing everything would ace
         # refusal_accuracy, and false_refusal_rate is what exposes that.
         "refusal_accuracy": (
-            m.mean([1.0 if i.refused else 0.0 for i in unanswerable if i.error is None])
+            m.mean_or_none([1.0 if i.refused else 0.0 for i in unanswerable if i.error is None])
         ),
         "false_refusal_rate": (
-            m.mean([1.0 if i.refused else 0.0 for i in answerable if i.error is None])
+            m.mean_or_none([1.0 if i.refused else 0.0 for i in answerable if i.error is None])
         ),
-        "escalation_rate": m.mean([1.0 if i.escalated else 0.0 for i in scored]),
+        "escalation_rate": m.mean_or_none([1.0 if i.escalated else 0.0 for i in scored]),
     }
     counts = {
         "items": len(items),
@@ -335,7 +349,8 @@ def aggregate(items: Sequence[EvalItemResult]) -> tuple[dict[str, float], dict[s
         "escalated": sum(1 for i in scored if i.escalated),
         "errors": len(items) - len(scored),
     }
-    return {k: round(v, 4) for k, v in metrics.items()}, counts
+    rounded = {k: (None if v is None else round(v, 4)) for k, v in metrics.items()}
+    return rounded, counts
 
 
 async def run_eval(
@@ -410,7 +425,12 @@ async def run_eval(
         report.report_path = str(write_report(report, target))
     if persist:
         await record_run(sessionmaker, report, passed=gate_result.passed if gate_result else None)
-    logger.info("eval_run_complete", subset=subset, duration_ms=duration_ms, **metrics)
+    logger.info(
+        "eval_run_complete",
+        subset=subset,
+        duration_ms=duration_ms,
+        **{k: v for k, v in metrics.items() if v is not None},
+    )
     return report
 
 
@@ -480,7 +500,10 @@ def format_summary(report: EvalReport) -> str:
         f"  {'metric':<22}{'score':>8}",
         f"  {'-' * 30}",
     ]
-    lines += [f"  {name:<22}{value:>8.3f}" for name, value in report.metrics.items()]
+    lines += [
+        f"  {name:<22}{'not measured' if value is None else format(value, '.3f'):>12}"
+        for name, value in report.metrics.items()
+    ]
     lines += [
         "",
         "  " + "  ".join(f"{name}={value}" for name, value in report.counts.items()),

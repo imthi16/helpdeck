@@ -45,6 +45,37 @@ class OpenAIEmbeddingProvider:
         return [item.embedding for item in sorted(response.data, key=lambda d: d.index)]
 
 
+class GeminiEmbeddingProvider:
+    """Hosted Gemini embeddings via the litellm gateway.
+
+    Model names are litellm-style, e.g. ``gemini/gemini-embedding-001``. The
+    ``dimensions`` argument is the reason this provider exists: Gemini's default
+    output is 3072-wide, but it accepts a requested width, so asking for 768 keeps
+    the vectors compatible with the ``chunks.embedding`` column instead of forcing
+    a migration (OpenAI's 1536 would).
+    """
+
+    def __init__(self, api_key: str, dims: int = EMBEDDING_DIMS) -> None:
+        self._api_key = api_key
+        self._dims = dims
+
+    async def embed(self, texts: list[str], model: str) -> list[list[float]]:
+        import litellm
+
+        response = await litellm.aembedding(
+            model=model, input=texts, api_key=self._api_key, dimensions=self._dims
+        )
+        data = sorted(response.data, key=OllamaEmbeddingProvider._index)
+        vectors = [OllamaEmbeddingProvider._vector(item) for item in data]
+        for vector in vectors:
+            if len(vector) != self._dims:
+                raise EmbeddingError(
+                    f"{model} returned {len(vector)}-dim vectors, expected {self._dims}; "
+                    "EMBEDDING_DIMS must match the chunks.embedding column width"
+                )
+        return vectors
+
+
 class OllamaEmbeddingProvider:
     """Local, free embeddings served by Ollama, via the litellm gateway.
 
@@ -125,6 +156,9 @@ def _default_provider() -> EmbeddingProvider:
     settings = get_settings()
     if settings.openai_api_key:
         return OpenAIEmbeddingProvider(settings.openai_api_key)
+    if settings.gemini_api_key:
+        logger.info("embeddings_gemini_mode", dims=EMBEDDING_DIMS)
+        return GeminiEmbeddingProvider(settings.gemini_api_key, EMBEDDING_DIMS)
     if ollama_reachable(settings.ollama_base_url):
         logger.info("embeddings_ollama_mode", base_url=settings.ollama_base_url)
         return OllamaEmbeddingProvider(settings.ollama_base_url)

@@ -78,3 +78,76 @@ async def test_embed_query_returns_single_vector() -> None:
 
     assert len(vector) == 4
     assert provider.calls == [["hello"]]
+
+
+# --- Gemini provider ---------------------------------------------------------
+#
+# Gemini exists here for one reason: it is the only hosted provider that serves a
+# 768-dim embedding, so it needs no migration of the chunks.embedding column
+# (OpenAI's 1536 would). Its default output is 3072 wide, so the requested width
+# is load-bearing — if it were ever dropped, every insert would fail at the DB
+# layer with a dimension mismatch far from the cause.
+
+
+class RecordingAembedding:
+    """Stands in for litellm.aembedding, capturing the kwargs it was called with."""
+
+    def __init__(self, dims: int) -> None:
+        self.dims = dims
+        self.kwargs: dict = {}
+
+    async def __call__(self, **kwargs):
+        self.kwargs = kwargs
+        n = len(kwargs["input"])
+
+        class Response:
+            data = [{"index": i, "embedding": [0.1] * self.dims} for i in range(n)]
+
+        return Response()
+
+
+async def test_gemini_requests_the_pinned_width(monkeypatch) -> None:
+    import sys
+    import types
+
+    from app.services.embeddings import GeminiEmbeddingProvider
+
+    fake = RecordingAembedding(dims=768)
+    monkeypatch.setitem(sys.modules, "litellm", types.SimpleNamespace(aembedding=fake))
+
+    provider = GeminiEmbeddingProvider("key", dims=768)
+    vectors = await provider.embed(["a", "b"], "gemini/gemini-embedding-001")
+
+    assert fake.kwargs["dimensions"] == 768, "the requested width must be sent"
+    assert fake.kwargs["api_key"] == "key"
+    assert [len(v) for v in vectors] == [768, 768]
+
+
+async def test_gemini_rejects_a_width_that_would_not_fit_the_column(monkeypatch) -> None:
+    """Fail at the provider, not on the INSERT — pgvector's error names no cause."""
+    import sys
+    import types
+
+    from app.services.embeddings import GeminiEmbeddingProvider
+
+    monkeypatch.setitem(
+        sys.modules, "litellm", types.SimpleNamespace(aembedding=RecordingAembedding(dims=3072))
+    )
+
+    provider = GeminiEmbeddingProvider("key", dims=768)
+    with pytest.raises(EmbeddingError, match="3072-dim vectors, expected 768"):
+        await provider.embed(["a"], "gemini/gemini-embedding-001")
+
+
+def test_a_gemini_key_selects_the_gemini_embedder(monkeypatch) -> None:
+    from app.core.config import get_settings
+    from app.services.embeddings import GeminiEmbeddingProvider, _default_provider
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+    monkeypatch.setenv("OLLAMA_BASE_URL", "")
+    get_settings.cache_clear()
+    try:
+        assert isinstance(_default_provider(), GeminiEmbeddingProvider)
+    finally:
+        get_settings.cache_clear()

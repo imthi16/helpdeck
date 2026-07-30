@@ -84,8 +84,11 @@ class GateResult:
 
 
 def evaluate_gate(
-    metrics: dict[str, float], thresholds: Sequence[Threshold] = DEFAULT_THRESHOLDS
+    metrics: dict[str, float | None], thresholds: Sequence[Threshold] = DEFAULT_THRESHOLDS
 ) -> GateResult:
+    """Absent and explicitly-None metrics are the same thing here: not measured,
+    therefore not certified, therefore a failure — but rendered as "not measured"
+    rather than as a score of zero, which would misstate what the run found."""
     return GateResult(tuple(GateCheck(t, metrics.get(t.metric)) for t in thresholds))
 
 
@@ -94,18 +97,18 @@ def format_gate(result: GateResult) -> str:
     only prints failures leaves you guessing what it actually checked."""
     lines = [
         "",
-        f"  {'metric':<22}{'score':>8}  {'bound':<12}  result",
+        f"  {'metric':<22}{'score':>12}  {'bound':<12}  result",
         f"  {'-' * 56}",
     ]
     for check in result.checks:
         t = check.threshold
-        score = "missing" if check.score is None else f"{check.score:.3f}"
+        score = "not measured" if check.score is None else f"{check.score:.3f}"
         bound = f"{'>=' if t.bound == 'min' else '<='} {t.value:.2f}"
         if check.passed:
             verdict = "pass"
         else:
             verdict = "ADVISORY" if t.advisory else "FAIL"
-        lines.append(f"  {t.metric:<22}{score:>8}  {bound:<12}  {verdict}")
+        lines.append(f"  {t.metric:<22}{score:>12}  {bound:<12}  {verdict}")
     lines.append("")
     if result.passed:
         advisories = [c for c in result.checks if not c.passed and c.threshold.advisory]
@@ -113,11 +116,11 @@ def format_gate(result: GateResult) -> str:
     else:
         lines.append("  gate FAILED")
         for check in result.failures:
-            score = "missing" if check.score is None else f"{check.score:.3f}"
+            score = "not measured" if check.score is None else f"{check.score:.3f}"
             lines.append(f"    {check.threshold.metric}={score} — {check.threshold.rationale}")
     for check in result.checks:
         if not check.passed and check.threshold.advisory:
-            score = "missing" if check.score is None else f"{check.score:.3f}"
+            score = "not measured" if check.score is None else f"{check.score:.3f}"
             lines.append(
                 f"    advisory: {check.threshold.metric}={score} — {check.threshold.rationale}"
             )

@@ -11,10 +11,11 @@ the app stays runnable and testable. The offline provider is clearly labeled and
 is not a substitute for a real model.
 """
 
+import asyncio
 import re
 import socket
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from functools import lru_cache
@@ -100,9 +101,54 @@ class LiteLLMProvider:
     needs neither a key nor any extra SDK.
     """
 
+    #: Retries for transient upstream failures. Hosted free tiers meter aggressively
+    #: (Gemini's free tier caps some models at 20 requests/day) and shared capacity
+    #: returns 503 under load; a whole eval run should not be voided by either when
+    #: a short wait clears it.
+    MAX_RATE_LIMIT_RETRIES = 3
+    BASE_RETRY_DELAY_SECONDS = 2.0
+    #: Providers report how long to wait; prefer their number over our backoff, but
+    #: cap it so a "retry in 20 hours" (an exhausted daily quota) fails fast instead
+    #: of hanging the run.
+    MAX_HONOURED_RETRY_DELAY_SECONDS = 60.0
+
+    _RETRY_DELAY_RE = re.compile(r"retry in (\d+(?:\.\d+)?)s", re.I)
+    #: Substrings that mark a failure as worth another attempt: rate limits (429)
+    #: and upstream capacity (503). Everything else — a 400, an unknown model, a bad
+    #: key — fails identically next time.
+    _TRANSIENT_MARKERS = (
+        "429",
+        "RESOURCE_EXHAUSTED",
+        "RateLimit",
+        "503",
+        "UNAVAILABLE",
+        "ServiceUnavailable",
+        "overloaded",
+        # Gemini's 503 body says only this, with no code in the message text.
+        "high demand",
+    )
+
     def __init__(self, api_key: str | None = None, *, api_base: str | None = None) -> None:
         self._api_key = api_key
         self._api_base = api_base
+
+    @classmethod
+    def _retry_delay(cls, error: Exception, attempt: int) -> float | None:
+        """Seconds to wait before retrying, or None if this is not worth retrying.
+
+        Only rate limits and upstream capacity errors are retried. A 400, a missing
+        model, or a bad key will fail identically on the next attempt, so retrying
+        them just multiplies the wait before the real error surfaces.
+        """
+        text = " ".join(str(error).split())
+        if not any(marker in text for marker in cls._TRANSIENT_MARKERS):
+            return None
+        if match := cls._RETRY_DELAY_RE.search(text):
+            advised = float(match.group(1))
+            if advised > cls.MAX_HONOURED_RETRY_DELAY_SECONDS:
+                return None
+            return advised
+        return cls.BASE_RETRY_DELAY_SECONDS * (2**attempt)
 
     def _kwargs(self, model: str, messages: list[LLMMessage], **kwargs: Any) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -121,7 +167,9 @@ class LiteLLMProvider:
     ) -> tuple[str, LLMUsage]:
         import litellm
 
-        response = await litellm.acompletion(**self._kwargs(model, messages, **kwargs))
+        response = await self._with_rate_limit_retry(
+            model, lambda: litellm.acompletion(**self._kwargs(model, messages, **kwargs))
+        )
         text = response.choices[0].message.content or ""
         usage = LLMUsage(
             prompt_tokens=getattr(response.usage, "prompt_tokens", 0) or 0,
@@ -129,12 +177,36 @@ class LiteLLMProvider:
         )
         return text, usage
 
+    async def _with_rate_limit_retry(self, model: str, call: Callable[[], Awaitable[Any]]) -> Any:
+        """Retry ``call`` through rate limits. Only the initial call is retried —
+        a stream that fails mid-iteration has already emitted tokens, so replaying
+        it would duplicate them."""
+        for attempt in range(self.MAX_RATE_LIMIT_RETRIES + 1):
+            try:
+                return await call()
+            except Exception as exc:  # noqa: BLE001 - classified by _retry_delay
+                delay = (
+                    None
+                    if attempt == self.MAX_RATE_LIMIT_RETRIES
+                    else self._retry_delay(exc, attempt)
+                )
+                if delay is None:
+                    raise
+                logger.warning(
+                    "llm_rate_limited", model=model, attempt=attempt + 1, delay_seconds=delay
+                )
+                await asyncio.sleep(delay)
+        raise AssertionError("unreachable")  # pragma: no cover
+
     async def stream(
         self, model: str, messages: list[LLMMessage], **kwargs: Any
     ) -> AsyncIterator[str]:
         import litellm
 
-        response = await litellm.acompletion(**self._kwargs(model, messages, **kwargs), stream=True)
+        response = await self._with_rate_limit_retry(
+            model,
+            lambda: litellm.acompletion(**self._kwargs(model, messages, **kwargs), stream=True),
+        )
         async for chunk in response:
             delta = chunk.choices[0].delta
             piece = getattr(delta, "content", None)
@@ -276,8 +348,14 @@ def _first_sentence(text: str) -> str:
 
 def _default_provider() -> LLMProvider:
     settings = get_settings()
-    if settings.anthropic_api_key or settings.openai_api_key:
-        return LiteLLMProvider(settings.anthropic_api_key or settings.openai_api_key or None)
+    # Order is only a tie-break for the unusual case of several keys being set;
+    # which models actually run is decided by LLM_CHEAP_MODEL / LLM_STRONG_MODEL,
+    # whose litellm prefix has to match the key you supplied.
+    hosted_key = (
+        settings.anthropic_api_key or settings.openai_api_key or settings.gemini_api_key or None
+    )
+    if hosted_key:
+        return LiteLLMProvider(hosted_key)
     if ollama_reachable(settings.ollama_base_url):
         logger.info("llm_ollama_mode", base_url=settings.ollama_base_url)
         return LiteLLMProvider(api_base=settings.ollama_base_url)

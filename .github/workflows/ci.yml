@@ -157,10 +157,10 @@ jobs:
       - name: Require the API key
         if: steps.changed.outputs.relevant == 'true'
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          if [ -z "$ANTHROPIC_API_KEY" ]; then
-            echo "::error::ANTHROPIC_API_KEY secret is not set. The eval gate scores the"
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "::error::GEMINI_API_KEY secret is not set. The eval gate scores the"
             echo "::error::real pipeline and cannot run against the offline stub — a stub"
             echo "::error::run always looks healthy. Add the secret in repo settings."
             exit 1
@@ -190,42 +190,32 @@ jobs:
             END IF;
           END
           \$\$;"
-      # Embeddings come from Ollama, not the hosted key: Anthropic serves no
-      # embedding model, and without a local one EmbeddingService silently falls
-      # back to the hashing stub — which turns dense retrieval into a bag-of-words
-      # match and makes context_recall meaningless. nomic-embed-text is 274MB and
-      # only has to embed 8 seed documents plus 30 queries, so CPU is fine here.
-      # OpenAI embeddings would work too but are 1536-dim, and EMBEDDING_DIMS is
-      # pinned to 768 by the chunks.embedding column width.
-      - name: Start Ollama for embeddings only
-        if: steps.changed.outputs.relevant == 'true'
-        run: |
-          curl -fsSL https://ollama.com/install.sh | sh
-          ollama serve &
-          for _ in $(seq 1 30); do
-            curl -sf http://localhost:11434/api/tags >/dev/null && break
-            sleep 1
-          done
-          ollama pull nomic-embed-text
       - name: Migrate and seed
         if: steps.changed.outputs.relevant == 'true'
         working-directory: apps/api
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          LLM_CHEAP_MODEL: anthropic/claude-haiku-4-5
-          LLM_STRONG_MODEL: anthropic/claude-opus-5
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          LLM_CHEAP_MODEL: gemini/gemini-3.1-flash-lite
+          LLM_STRONG_MODEL: gemini/gemini-3.5-flash
+          EMBEDDING_MODEL: gemini/gemini-embedding-001
+          EMBEDDING_DIMS: "768"
         run: |
           uv run alembic upgrade head
           uv run python scripts/seed.py
-      # ~$0.25 per run: roughly 60 Opus calls (~600 input tokens each, very short
-      # answers) plus a similar number of Haiku router/gate calls.
+      # ~150 model calls per run (~60 on the strong route, ~45 on the cheap one,
+      # plus embeddings). REQUIRES PAID GEMINI QUOTA: the free tier meters
+      # generation per model per day and caps the capable models at 20 requests/day
+      # (gemini-3.5-flash and 3.6-flash both), so a free key fails this job with
+      # 429s. Embedding quota is separate and generous. See docs/NOTES.md, 6.4.
       - name: Eval gate — 30-item fast subset
         if: steps.changed.outputs.relevant == 'true'
         working-directory: apps/api
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          LLM_CHEAP_MODEL: anthropic/claude-haiku-4-5
-          LLM_STRONG_MODEL: anthropic/claude-opus-5
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          LLM_CHEAP_MODEL: gemini/gemini-3.1-flash-lite
+          LLM_STRONG_MODEL: gemini/gemini-3.5-flash
+          EMBEDDING_MODEL: gemini/gemini-embedding-001
+          EMBEDDING_DIMS: "768"
         run: uv run python ../../eval/run_eval.py --subset fast --gate --no-db
       - uses: actions/upload-artifact@v4
         if: always() && steps.changed.outputs.relevant == 'true'

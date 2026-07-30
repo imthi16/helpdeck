@@ -126,11 +126,26 @@ def test_a_failing_gate_explains_each_failure() -> None:
     assert "grounded in retrieved context" in rendered
 
 
-def test_missing_metrics_render_as_missing_not_zero() -> None:
+def test_missing_metrics_render_as_not_measured_not_zero() -> None:
+    """Reporting an unmeasured metric as 0.000 states a finding the run never made."""
     rendered = format_gate(evaluate_gate({"faithfulness": 0.9}))
 
-    assert "missing" in rendered
+    assert "not measured" in rendered
+    assert "0.000" not in rendered
     assert "gate FAILED" in rendered
+
+
+def test_an_explicitly_unmeasured_metric_is_not_read_as_zero() -> None:
+    """A subset with no unanswerable items has undefined refusal accuracy.
+
+    aggregate() emits None rather than mean([]) == 0.0, so the gate must not report
+    "refused nothing" for a run that asked no out-of-KB questions.
+    """
+    result = evaluate_gate(HEALTHY | {"refusal_accuracy": None})
+    rendered = format_gate(result)
+
+    assert not result.passed, "an uncertified metric cannot pass the gate"
+    assert "refusal_accuracy=not measured" in rendered
 
 
 # --- stub detection ----------------------------------------------------------
