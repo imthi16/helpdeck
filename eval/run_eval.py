@@ -23,12 +23,18 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # no
 from app.core.config import get_settings  # noqa: E402
 from app.services import tracing  # noqa: E402
 from app.services.evaluation.dataset import load_golden, select_subset  # noqa: E402
+from app.services.evaluation.gate import (  # noqa: E402
+    DEFAULT_THRESHOLDS,
+    evaluate_gate,
+    format_gate,
+)
 from app.services.evaluation.metrics import JUDGE_ROUTE  # noqa: E402
 from app.services.evaluation.runner import (  # noqa: E402
     DEFAULT_CONCURRENCY,
     EvalSetupError,
     format_summary,
     run_eval,
+    stub_providers,
 )
 from app.services.llm import LLMRoute  # noqa: E402
 
@@ -51,6 +57,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--no-db", action="store_true", help="skip the eval_runs row (report only)"
+    )
+    parser.add_argument(
+        "--gate",
+        action="store_true",
+        help="apply the 6.4 thresholds and exit non-zero if any blocking one fails",
     )
     parser.add_argument(
         "--judge-route",
@@ -84,6 +95,7 @@ async def main(argv: list[str] | None = None) -> int:
             subset=args.subset,
             concurrency=args.concurrency,
             judge_route=LLMRoute(args.judge_route),
+            thresholds=DEFAULT_THRESHOLDS if args.gate else None,
             persist=not args.no_db,
             report_path=Path(args.out) if args.out else None,
         )
@@ -96,7 +108,23 @@ async def main(argv: list[str] | None = None) -> int:
         await engine.dispose()
 
     print(format_summary(report))
-    return 1 if report.counts["errors"] else 0
+    if report.counts["errors"]:
+        # Errored items are excluded from the averages, so a run that mostly crashed
+        # can still show healthy scores. Fail before the gate gets to bless it.
+        return 1
+    if args.gate:
+        # A gate that can go green on stub scores is worse than no gate: both stubs
+        # are lexical and flatter the pipeline. Refuse before applying thresholds.
+        if stubs := stub_providers(report.environment):
+            print(
+                f"\n  gate FAILED — scored with stubs, not models ({', '.join(stubs)}).",
+                file=sys.stderr,
+            )
+            return 1
+        result = evaluate_gate(report.metrics)
+        print(format_gate(result))
+        return 0 if result.passed else 1
+    return 0
 
 
 if __name__ == "__main__":

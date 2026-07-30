@@ -11,10 +11,12 @@
 - **Last updated:** 2026-07-30
 - **Blockers:** 6.1's Verify (a costed trace tree visible in Langfuse) needs
   `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY`; none available in this environment.
-- **Note for 6.4:** 6.3's real-model run puts faithfulness, context_recall and
-  refusal-accuracy comfortably over the gate thresholds this plan proposes, while the
-  pipeline's actual weakness — `false_refusal_rate` 0.40 — has no threshold at all.
-  Consider adding a ceiling for it; see `docs/NOTES.md` (Phase 6.3).
+- **6.4 code complete, Verify outstanding.** Gate logic, both CI workflows and the
+  stub guard are committed and tested. The Verify (a weakened prompt fails the gate)
+  needs `ANTHROPIC_API_KEY` as a GitHub secret — the gate scores the real pipeline and
+  refuses to run on the offline stub by design. `false_refusal_rate` ships advisory,
+  not blocking, at 0.25: 6.3 measured 0.40, so gating on it would fail every PR until
+  retrieval and the serving gate improve. See `docs/NOTES.md` (Phase 6.4).
 
 ---
 

@@ -33,6 +33,7 @@ from app.models import Document, DocumentStatus, EvalRun, EvalRunKind, Organizat
 from app.services.embeddings import EmbeddingService
 from app.services.evaluation import metrics as m
 from app.services.evaluation.dataset import GoldenItem
+from app.services.evaluation.gate import GateResult, Threshold, evaluate_gate
 from app.services.ingestion.seed import DEMO_ORG_NAME
 from app.services.llm import LLMRoute
 from app.services.tracing import turn_trace
@@ -89,13 +90,38 @@ class EvalReport:
     git_sha: str | None
     items: list[EvalItemResult] = field(default_factory=list)
     report_path: str | None = None
+    #: Gate verdict when thresholds were applied (6.4); None when they were not.
+    #: Kept on the report so the JSON artifact records what CI decided and why.
+    gate: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
+#: Providers that fabricate plausible-looking scores without a model behind them.
+#: A gated run must never pass on these — see ``stub_providers``.
+STUB_PROVIDERS = frozenset({"OfflineGroundedProvider", "HashingEmbeddingProvider"})
+
+
+def stub_providers(environment: dict[str, Any]) -> list[str]:
+    """Which of a run's providers were deterministic stubs rather than models.
+
+    The gate refuses to pass when this is non-empty. Both stubs are lexical, so
+    they produce healthy-looking numbers from a pipeline that was never exercised:
+    the answer stub always cites, and the hashing embedder makes dense retrieval a
+    bag-of-words match. Green on stub scores is the worst outcome a gate can have.
+    """
+    return sorted(
+        f"{key}={value}"
+        for key, value in environment.items()
+        if isinstance(value, str) and value in STUB_PROVIDERS
+    )
+
+
 def environment_labels(
-    deps: AgentDependencies, judge_route: LLMRoute = m.JUDGE_ROUTE
+    deps: AgentDependencies,
+    judge_route: LLMRoute = m.JUDGE_ROUTE,
+    embedding_service: EmbeddingService | None = None,
 ) -> dict[str, Any]:
     """What produced the scores. A run without this is an unreadable number.
 
@@ -111,6 +137,9 @@ def environment_labels(
         "cheap_model": deps.gateway.model_for(LLMRoute.cheap),
         "strong_model": deps.gateway.model_for(LLMRoute.strong),
         "judge_model": deps.gateway.model_for(judge_route),
+        "embedding_provider": (
+            embedding_service.provider_name if embedding_service is not None else None
+        ),
         "embedding_model": settings.embedding_model,
         "embedding_dims": settings.embedding_dims,
         "reranker": settings.reranker,
@@ -321,6 +350,7 @@ async def run_eval(
     deps: AgentDependencies | None = None,
     embedding_service: EmbeddingService | None = None,
     judge_route: LLMRoute = m.JUDGE_ROUTE,
+    thresholds: Sequence[Threshold] | None = None,
     persist: bool = True,
     report_path: Path | None = None,
 ) -> EvalReport:
@@ -364,18 +394,43 @@ async def run_eval(
         duration_ms=duration_ms,
         metrics=metrics,
         counts=counts,
-        environment=environment_labels(deps, judge_route),
+        environment=environment_labels(deps, judge_route, embedding_service),
         git_sha=git_sha(),
         items=list(results),
     )
+
+    # The gate runs before the report is written and the row recorded, so both
+    # artifacts carry the verdict rather than leaving CI as the only place it exists.
+    gate_result = evaluate_gate(metrics, thresholds) if thresholds is not None else None
+    if gate_result is not None:
+        report.gate = gate_summary(gate_result)
 
     target = report_path or default_report_path(started_at, subset)
     if target is not None:
         report.report_path = str(write_report(report, target))
     if persist:
-        await record_run(sessionmaker, report)
+        await record_run(sessionmaker, report, passed=gate_result.passed if gate_result else None)
     logger.info("eval_run_complete", subset=subset, duration_ms=duration_ms, **metrics)
     return report
+
+
+def gate_summary(result: GateResult) -> dict[str, Any]:
+    """Flatten a gate verdict for the JSON report — thresholds included, so a stored
+    report explains itself even after the defaults move."""
+    return {
+        "passed": result.passed,
+        "checks": [
+            {
+                "metric": check.threshold.metric,
+                "score": check.score,
+                "bound": check.threshold.bound,
+                "threshold": check.threshold.value,
+                "advisory": check.threshold.advisory,
+                "passed": check.passed,
+            }
+            for check in result.checks
+        ],
+    }
 
 
 def default_report_path(started_at: dt.datetime, subset: str) -> Path:
@@ -432,13 +487,20 @@ def format_summary(report: EvalReport) -> str:
         "",
         "  environment: " + ", ".join(f"{k}={v}" for k, v in report.environment.items()),
     ]
-    if report.environment.get("llm_provider") == "OfflineGroundedProvider":
+    stubs = stub_providers(report.environment)
+    if stubs:
         lines += [
             "",
-            "  WARNING: scored by the deterministic offline stub, not a language model.",
+            f"  WARNING: scored with deterministic stubs, not models ({', '.join(stubs)}).",
             "  These numbers validate the harness only. Start Ollama or set an API key",
             "  for scores worth quoting.",
         ]
+        if "HashingEmbeddingProvider" in " ".join(stubs):
+            lines.append(
+                "  Note: an ANTHROPIC_API_KEY alone does not supply embeddings — "
+                "Anthropic\n  serves no embedding model, so retrieval degraded to "
+                "lexical hashing."
+            )
     if report.counts.get("errors"):
         lines.append(f"\n  {report.counts['errors']} item(s) failed — see the JSON report.")
     if report.report_path:

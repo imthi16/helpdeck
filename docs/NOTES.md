@@ -465,3 +465,68 @@ threshold — refusing everything trivially aces `refusal_accuracy`.
 report written and `eval_runs` row recorded. Numbers above come from `LiteLLMProvider` +
 Ollama; the offline stub run is labelled `OfflineGroundedProvider` and the summary prints a
 warning that those numbers validate the harness only and are not a quality claim.
+
+## Phase 6.4 — CI eval gate
+
+`app/services/evaluation/gate.py` applies thresholds to a finished report; `--gate` on
+`eval/run_eval.py` exits non-zero when a blocking one fails and records the verdict on
+both the JSON report and the `eval_runs.passed` column. The gate is pure arithmetic over
+`report.metrics`, so it is fully testable without a model (`tests/test_eval_gate.py`).
+
+Two rules it follows, both about failing in the safe direction:
+
+- **A missing metric fails.** An empty or mostly-errored report must not read as
+  "nothing exceeded the threshold". Errored items are also excluded from the averages,
+  so the CLI fails on `counts.errors` *before* the gate can bless a run that mostly
+  crashed.
+- **`false_refusal_rate` is advisory, not blocking.** `refusal_accuracy` alone is aced
+  by refusing everything, so the counterpart is reported at a 0.25 ceiling but does not
+  fail the build — 6.3 measured 0.40 on this pipeline, so blocking on it would fail
+  every PR until retrieval and the serving gate improve. Promoting it is a one-line
+  change (`advisory=False`), covered by a test.
+
+Applied to 6.3's real-model fast subset, all three of the plan's thresholds pass
+(faithfulness 1.000 ≥ 0.85, context_recall 0.840 ≥ 0.70, refusal_accuracy 1.000 ≥ 0.90)
+and the only signal is the advisory. **The gate as specified would not have caught this
+pipeline's actual defect** — worth remembering before trusting a green run.
+
+### CI needs a hosted model *and* a local embedder
+
+The gate is only meaningful against real models: `OfflineGroundedProvider` ignores the
+system prompt entirely, so the plan's Verify — a deliberately weakened grounded prompt
+failing the gate — produces *identical* stub output and passes. A stub-backed gate is
+theatre. The PR job therefore fails loudly when `ANTHROPIC_API_KEY` is absent rather
+than skipping: a gate that silently passes without credentials is not a gate.
+
+**The trap: `ANTHROPIC_API_KEY` alone is not enough.** `llm.py` switches to hosted
+Claude as soon as the key is set, but `embeddings.py` picks its provider independently
+and **Anthropic serves no embedding model** — so embeddings fall through to
+`HashingEmbeddingProvider` behind a `logger.warning`. Dense retrieval silently becomes a
+bag-of-words match, `context_recall` measures the wrong thing, and the gate goes green
+over a pipeline that was never exercised. Two defences:
+
+- CI runs Ollama for **embeddings only** (`nomic-embed-text`, 274MB; it embeds 8 seed
+  documents plus 30 queries, so CPU is fine). OpenAI embeddings would also work but are
+  1536-dim, and `EMBEDDING_DIMS` is pinned to 768 by the `chunks.embedding` column.
+- `runner.stub_providers()` names any stub in a run's environment; `--gate` refuses to
+  pass when it finds one, and `format_summary` calls out the embedding case explicitly.
+  `environment.embedding_provider` is recorded alongside `llm_provider` for the same
+  reason `judge_model` is — an unlabelled run is an unreadable number.
+
+Models: `anthropic/claude-haiku-4-5` cheap (router, serving gate), `anthropic/claude-opus-5`
+strong (answers, eval judge) — matching the cheap/strong split CLAUDE.md pins. Roughly
+**$0.25 per gated PR**: ~60 Opus calls at ~600 input tokens each with very short answers,
+plus a similar number of Haiku calls. The PR job runs only when the diff touches
+`app/agent`, `app/services/retrieval*`, `app/services/evaluation`, `eval/`, or the
+workflow itself, so a docs-only PR pays nothing.
+
+`.github/workflows/eval-nightly.yml` runs the full 107-item set at 03:15 UTC and keeps
+its report for 30 days. It persists the `eval_runs` row (the PR gate passes `--no-db`),
+though against a throwaway CI database that row lives only as long as the job — pointing
+it at a persistent instance is what 6.6's Quality card will need.
+
+**Verify:** outstanding. Gate logic, workflows, and stub guard are tested (284 tests
+green), and the gate has been exercised end to end both ways — it refuses with exit 1 on
+a stub run, and passes on 6.3's real-model report. The plan's weakened-prompt
+demonstration needs the GitHub secret; it cannot be done against the stub, and on local
+CPU models each fast-subset run is ~25 minutes.

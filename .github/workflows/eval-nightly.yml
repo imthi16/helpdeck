@@ -1,0 +1,108 @@
+# Nightly full golden-set eval (plan 6.4). The PR gate scores the 30-item fast
+# subset for speed; this scores all 107 and records the row that 6.6's Quality
+# card reads, so the in-product trend line comes from the full set rather than
+# from whichever subset a PR happened to run.
+name: Eval (nightly)
+
+on:
+  schedule:
+    # 03:15 UTC — off the hour, since scheduled runs bunch up on :00 and get delayed.
+    - cron: "15 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  full-eval:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: helpdeck
+          POSTGRES_PASSWORD: helpdeck
+          POSTGRES_DB: helpdeck
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U helpdeck -d helpdeck"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6380:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require the API key
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::error::ANTHROPIC_API_KEY secret is not set; the nightly eval cannot"
+            echo "::error::run against the offline stub — a stub run always looks healthy."
+            exit 1
+          fi
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - name: Install API deps
+        working-directory: apps/api
+        run: uv sync
+      - name: Provision helpdeck_app login role
+        env:
+          PGPASSWORD: helpdeck
+        run: |
+          psql -h localhost -p 5433 -U helpdeck -d helpdeck -v ON_ERROR_STOP=1 -c "
+          DO \$\$
+          BEGIN
+            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'helpdeck_app') THEN
+              CREATE ROLE helpdeck_app LOGIN PASSWORD 'helpdeck_app'
+                NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
+            ELSE
+              ALTER ROLE helpdeck_app LOGIN PASSWORD 'helpdeck_app'
+                NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
+            END IF;
+          END
+          \$\$;"
+      # See the PR gate for why embeddings are local: Anthropic serves no embedding
+      # model, and the silent fallback is the hashing stub.
+      - name: Start Ollama for embeddings only
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          ollama serve &
+          for _ in $(seq 1 30); do
+            curl -sf http://localhost:11434/api/tags >/dev/null && break
+            sleep 1
+          done
+          ollama pull nomic-embed-text
+      - name: Migrate and seed
+        working-directory: apps/api
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          LLM_CHEAP_MODEL: anthropic/claude-haiku-4-5
+          LLM_STRONG_MODEL: anthropic/claude-opus-5
+        run: |
+          uv run alembic upgrade head
+          uv run python scripts/seed.py
+      # Persists the eval_runs row (no --no-db, unlike the PR gate: a throwaway CI
+      # database means the row is only useful as the uploaded report until 6.4's
+      # follow-up points this at a persistent instance).
+      - name: Full golden set
+        working-directory: apps/api
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          LLM_CHEAP_MODEL: anthropic/claude-haiku-4-5
+          LLM_STRONG_MODEL: anthropic/claude-opus-5
+        run: uv run python ../../eval/run_eval.py --subset full --gate
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-report-nightly
+          path: eval/reports/
+          retention-days: 30
+          if-no-files-found: ignore

@@ -108,6 +108,132 @@ jobs:
             exit 1
           fi
 
+  # Plan 6.4. Only runs when a PR touches the pipeline the eval measures — the
+  # gate costs real API tokens, so a docs-only PR should not pay for it.
+  eval-gate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: helpdeck
+          POSTGRES_PASSWORD: helpdeck
+          POSTGRES_DB: helpdeck
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U helpdeck -d helpdeck"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6380:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: changed
+        name: Does this PR touch the pipeline the eval measures?
+        run: |
+          BASE="origin/${{ github.base_ref }}"
+          PATHS='apps/api/app/agent apps/api/app/services/retrieval apps/api/app/services/evaluation eval/ .github/workflows/ci.yml'
+          if git diff --name-only "$BASE"...HEAD -- $PATHS | grep -q .; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+            echo "No changes under $PATHS — skipping the eval gate."
+          fi
+      # Fail loudly rather than skip. A gate that silently passes when its
+      # credentials are missing is not a gate; anyone could land a regression by
+      # having no secret configured.
+      - name: Require the API key
+        if: steps.changed.outputs.relevant == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::error::ANTHROPIC_API_KEY secret is not set. The eval gate scores the"
+            echo "::error::real pipeline and cannot run against the offline stub — a stub"
+            echo "::error::run always looks healthy. Add the secret in repo settings."
+            exit 1
+          fi
+      - uses: astral-sh/setup-uv@v6
+        if: steps.changed.outputs.relevant == 'true'
+        with:
+          python-version: "3.12"
+      - name: Install API deps
+        if: steps.changed.outputs.relevant == 'true'
+        working-directory: apps/api
+        run: uv sync
+      - name: Provision helpdeck_app login role
+        if: steps.changed.outputs.relevant == 'true'
+        env:
+          PGPASSWORD: helpdeck
+        run: |
+          psql -h localhost -p 5433 -U helpdeck -d helpdeck -v ON_ERROR_STOP=1 -c "
+          DO \$\$
+          BEGIN
+            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'helpdeck_app') THEN
+              CREATE ROLE helpdeck_app LOGIN PASSWORD 'helpdeck_app'
+                NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
+            ELSE
+              ALTER ROLE helpdeck_app LOGIN PASSWORD 'helpdeck_app'
+                NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
+            END IF;
+          END
+          \$\$;"
+      # Embeddings come from Ollama, not the hosted key: Anthropic serves no
+      # embedding model, and without a local one EmbeddingService silently falls
+      # back to the hashing stub — which turns dense retrieval into a bag-of-words
+      # match and makes context_recall meaningless. nomic-embed-text is 274MB and
+      # only has to embed 8 seed documents plus 30 queries, so CPU is fine here.
+      # OpenAI embeddings would work too but are 1536-dim, and EMBEDDING_DIMS is
+      # pinned to 768 by the chunks.embedding column width.
+      - name: Start Ollama for embeddings only
+        if: steps.changed.outputs.relevant == 'true'
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          ollama serve &
+          for _ in $(seq 1 30); do
+            curl -sf http://localhost:11434/api/tags >/dev/null && break
+            sleep 1
+          done
+          ollama pull nomic-embed-text
+      - name: Migrate and seed
+        if: steps.changed.outputs.relevant == 'true'
+        working-directory: apps/api
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          LLM_CHEAP_MODEL: anthropic/claude-haiku-4-5
+          LLM_STRONG_MODEL: anthropic/claude-opus-5
+        run: |
+          uv run alembic upgrade head
+          uv run python scripts/seed.py
+      # ~$0.25 per run: roughly 60 Opus calls (~600 input tokens each, very short
+      # answers) plus a similar number of Haiku router/gate calls.
+      - name: Eval gate — 30-item fast subset
+        if: steps.changed.outputs.relevant == 'true'
+        working-directory: apps/api
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          LLM_CHEAP_MODEL: anthropic/claude-haiku-4-5
+          LLM_STRONG_MODEL: anthropic/claude-opus-5
+        run: uv run python ../../eval/run_eval.py --subset fast --gate --no-db
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.changed.outputs.relevant == 'true'
+        with:
+          name: eval-report
+          path: eval/reports/
+          if-no-files-found: ignore
+
   widget-e2e:
     runs-on: ubuntu-latest
     services:

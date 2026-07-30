@@ -342,4 +342,36 @@ def test_summary_flags_offline_stub_runs() -> None:
     text = format_summary(report)
 
     assert "faithfulness" in text
-    assert "offline stub" in text, "an unlabelled stub run reads as a real quality claim"
+    assert "WARNING" in text, "an unlabelled stub run reads as a real quality claim"
+    assert "OfflineGroundedProvider" in text, "the summary must name which stub scored it"
+
+
+def test_summary_flags_a_hosted_run_that_fell_back_to_stub_embeddings() -> None:
+    """The trap an ANTHROPIC_API_KEY alone sets: real LLM, stub embeddings.
+
+    Anthropic serves no embedding model, so EmbeddingService falls back to the
+    hashing provider behind a log warning and dense retrieval silently becomes a
+    bag-of-words match. The summary has to say so, or context_recall reads as real.
+    """
+    from app.services.evaluation.runner import EvalReport
+
+    report = EvalReport(
+        dataset="golden.jsonl",
+        subset="fast",
+        org_id=str(uuid.uuid4()),
+        item_count=1,
+        started_at="2026-07-29T00:00:00+00:00",
+        duration_ms=1200,
+        metrics={"context_recall": 1.0},
+        counts={"items": 1, "errors": 0},
+        environment={
+            "llm_provider": "LiteLLMProvider",
+            "embedding_provider": "HashingEmbeddingProvider",
+        },
+        git_sha=None,
+    )
+
+    text = format_summary(report)
+
+    assert "HashingEmbeddingProvider" in text
+    assert "ANTHROPIC_API_KEY alone does not supply embeddings" in text

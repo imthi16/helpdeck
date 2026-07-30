@@ -161,6 +161,14 @@ class EmbeddingService:
             vectors.extend(await self._embed_batch_traced(batch))
         return vectors
 
+    @property
+    def provider_name(self) -> str:
+        """Which backend embeds. The eval report labels runs with this: an
+        ``ANTHROPIC_API_KEY`` alone switches the LLM to hosted Claude but leaves
+        embeddings to fall back to the hashing stub (Anthropic serves no embedding
+        model), which quietly turns dense retrieval lexical."""
+        return type(self._provider).__name__
+
     async def embed_query(self, text: str) -> list[float]:
         return (await self.embed_texts([text]))[0]
 
