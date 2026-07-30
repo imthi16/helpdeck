@@ -591,3 +591,60 @@ so a hosted key does not force hosted generation.
 `LiteLLMProvider` also gained retry-with-backoff for transient upstream failures (429
 and 503), preferring the provider's own `retry in Ns` hint and refusing to honour a
 multi-hour one, which means an exhausted daily quota fails fast instead of sleeping.
+
+## Phase 6.5 — Online sampling
+
+A nightly arq cron (02:30 UTC) re-scores a sample of each org's real answers for
+faithfulness, using the same independent judge as the offline eval. The golden set
+measures the pipeline against a fixture corpus that never changes; this measures it
+against the documents tenants actually ingest and the questions users actually ask.
+
+**`eval_runs` became org-scoped.** 6.3 built it as a system table because a golden
+run belongs to no tenant. An online run aggregates one org's conversations, which is
+that org's data, so the table gained a nullable `org_id` and RLS
+(`d7a3f81b2e64`). Golden rows keep `org_id` NULL and therefore match no tenant
+policy — deliberate: a tenant's Quality card should show quality measured on their
+own traffic, not on a demo corpus they have never seen. The app role gained INSERT,
+since the job runs as the app rather than as the CLI's superuser, and `WITH CHECK`
+constrains it to its own org.
+
+Design decisions worth keeping:
+
+- **Sample from the *scorable* population, not from all answers.** Sampling first and
+  filtering refusals after would shrink an already-small sample by the refusal rate,
+  so a cautious pipeline would be measured on fewer answers than a reckless one.
+- **Refusals are excluded, never scored 0.0** — the offline rule. A refusal asserts
+  nothing, so it cannot be unfaithful; counting it as zero would make a correctly
+  cautious pipeline look like a hallucinating one, and this pipeline refuses 40%.
+- **Cited chunks are refetched in full.** The stored citation snippet is truncated to
+  200 characters — enough for a UI tooltip, not enough to judge a claim against.
+- **Sample size is clamped at both ends.** A floor (5) so a quiet night does not
+  produce a one-item average the 7-day trend then treats as signal; a ceiling (100)
+  so a busy night does not run up an unbounded judge bill.
+- **No alert without both a measurement and a baseline.** A night with nothing
+  scorable has no score to have dropped, and the first run has nothing to drop from.
+  Alerting on either would cry wolf exactly when the run carries no information.
+- **`passed` stays NULL.** Sampling reports; it does not gate. A verdict here would
+  be confused with 6.4's.
+
+**Known limitation, stated in the module docstring:** only *cited* chunks are
+recorded, not the full retrieval set, so an answer grounded in a retrieved-but-uncited
+passage scores lower here than offline. Online faithfulness is a conservative lower
+bound and is not comparable with a golden number — the differing `kind` values keep
+the two from being averaged together.
+
+**Verify:** ran against seeded traffic for Demo Org — sampled 5, scored 5, correctly
+excluded 6 refusals, wrote the `eval_runs` row, and read it back through a *tenant*
+session (so RLS admits the org to its own row). No alert, correctly, on a first run
+with no baseline.
+
+### It independently corroborates the 6.3 finding
+
+Every one of the five answers scored **1.00** from the independent judge while the
+pipeline's own serving gate had scored them **0.4–0.8** — a mean gap of about +0.30
+in the judge's favour. That is the same over-escalation 6.3 measured as
+`false_refusal_rate` 0.40, now visible on real traffic rather than the golden set:
+the serving gate is systematically harsher than an independent judge, and
+`faithfulness_threshold=0.4` is discarding answers that are in fact fully grounded.
+`mean_confidence_gap()` exposes this deliberately, since it is the number that should
+drive re-tuning the gate.

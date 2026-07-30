@@ -1,17 +1,37 @@
-"""Evaluation run history — one row per offline eval run (plan 6.3).
+"""Evaluation run history — one row per eval run (plans 6.3 and 6.5).
 
-A system table, not tenant data: a golden-set run scores the pipeline against a
-fixture corpus, so there is no ``org_id`` and no RLS, following the ``audit_logs``
-precedent. The app role is granted SELECT only (6.6's Quality card reads the
-latest row); runs are written by the CLI as the superuser. 6.5 adds org scoping
-when it starts scoring real per-tenant traffic.
+Two kinds share the table because they answer the same question — how good are the
+answers — and 6.6 charts them the same way:
+
+- ``golden`` (6.3): an offline run over ``eval/golden.jsonl``. Scores the pipeline
+  against a fixture corpus, belongs to no tenant, ``org_id`` is NULL, written by
+  the eval CLI as the superuser.
+- ``online`` (6.5): a nightly sample of one org's real conversations, re-scored for
+  faithfulness. This *is* tenant data, so it carries ``org_id`` and is written by
+  the worker as the app role.
+
+RLS keeps them apart. The tenant policy is the usual ``org_id = current_tenant``,
+under which golden rows (NULL org) match no tenant — deliberate, since a tenant's
+Quality card should show quality measured on their own traffic, not on a demo
+corpus they have never seen.
 """
 
 import datetime as dt
 import enum
+import uuid
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, Index, Integer, String, func
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Uuid,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -29,9 +49,19 @@ class EvalRunKind(enum.StrEnum):
 
 class EvalRun(Base, UUIDPrimaryKeyMixin):
     __tablename__ = "eval_runs"
-    __table_args__ = (Index("ix_eval_runs_created_at", "created_at"),)
+    __table_args__ = (
+        Index("ix_eval_runs_created_at", "created_at"),
+        Index("ix_eval_runs_org_id_created_at", "org_id", text("created_at DESC")),
+    )
 
     kind: Mapped[str] = mapped_column(String(32), nullable=False, default=EvalRunKind.golden)
+    #: NULL for golden runs — they score a fixture corpus and belong to no tenant.
+    #: Set for online runs (6.5), which aggregate one org's real conversations and
+    #: are therefore that org's data. RLS keeps the two apart: the tenant policy is
+    #: ``org_id = current_tenant``, so golden rows are invisible to the app role.
+    org_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True
+    )
     #: Dataset filename, e.g. "golden.jsonl".
     dataset: Mapped[str] = mapped_column(String(128), nullable=False)
     #: Which slice ran: "full", or a tag such as "fast" (the 6.4 CI gate).
