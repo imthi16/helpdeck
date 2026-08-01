@@ -613,6 +613,45 @@ caught: the **Ollama container's clock runs ~5h17m behind the host**, so
 nothing; and GIN pads its method column, so `grep 'POST /api/'` (single space) matches
 zero lines in a log full of them. Use `grep -E 'POST +"/api/'`.
 
+### The weakened run wedges: no read timeout on the Ollama call
+
+**2026-08-01: second attempt at the weakened half hung after 20 of 30 items and was
+killed. Still no weakened-prompt result — 6.4's Verify remains half done.** Started
+14:05, last log line 15:15:44, discovered wedged at 22:32 — **7h16m producing nothing**.
+
+The diagnosis, from process and socket state rather than container logs (the clock skew
+above makes those untrustworthy):
+
+- the runner had used **8 seconds of CPU across 8h27m elapsed**, sleeping in `ep_poll`
+- it held an ESTABLISHED socket to `127.0.0.1:11434` (fd 7) with **0 bytes queued in
+  both directions** — a request that was sent and will never be answered
+- Ollama itself was healthy but `/api/ps` returned `{"models":[]}`: no model resident,
+  nothing in flight, only the 5s healthcheck hitting `/api/tags`
+
+So the model was evicted while a request was outstanding and the client blocked forever.
+**Nothing in the path sets a read timeout**, so there is no upper bound on a single call
+and no watchdog above it. Two consequences worth fixing before the next attempt:
+
+- **A wedge costs the whole run.** `run_eval.py` writes its report only after the last
+  item, so 20 completed items evaporated. Incremental writes (or a resume file) would
+  have made this a 10-item continuation instead of a full restart.
+- **CI inherits the same failure.** `eval-nightly.yml` on the full 107-item set would
+  hang identically and burn until the job timeout, with a silent log — indistinguishable
+  from "still running", which is exactly how it read here for 7 hours.
+
+A timeout on the gateway call plus a per-item watchdog is the fix; both are changes to
+shipped code, so they are proposed rather than applied — the task in flight is 6.4's
+Verify, not hardening the runner.
+
+**This makes CPU-only local runs a poor host for the verify.** An 85-minute uncontended
+run has a wide window to hit this, and it has now cost two sessions. The RTX 4090 box at
+`172.18.15.184` (32 cores, 62GB, Ollama native, `llama3.2:3b` + `qwen2.5:7b` +
+`nomic-embed-text` already pulled, `uv` installed) shortens the window by roughly an
+order of magnitude. What is missing there is the repo and a corpus: transfer is blocked
+pending permission, and the corpus should be moved by `pg_dump` of the local `helpdeck`
+DB rather than re-seeded, so the run hits the **same 8-document corpus** the baseline
+used and the two numbers stay comparable.
+
 ## Gemini as a hosted provider
 
 `GEMINI_API_KEY` now selects Gemini for both chat (`gemini/<model>` via litellm) and

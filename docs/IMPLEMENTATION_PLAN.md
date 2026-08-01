@@ -8,7 +8,7 @@
 ## Status
 
 - **Current phase:** 6 (6.2, 6.3, 6.5, 6.6 done; 6.1 and 6.4 code complete, Verify outstanding)
-- **Last updated:** 2026-07-30
+- **Last updated:** 2026-08-01
 - **Blockers:** 6.1's Verify (a costed trace tree visible in Langfuse) needs
   `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY`; none available in this environment.
 - **6.4 Verify half done, paused for machine time.** The "revert passes" half is
@@ -23,6 +23,12 @@
   `false_refusal_rate` ships advisory, not blocking, at 0.25: 6.3 measured 0.40 and this
   run 0.36, so gating on it would fail every PR until retrieval and the serving gate
   improve.
+- **2026-08-01: the weakened half was attempted again and wedged at 20/30 items**, then
+  was killed after 7h16m of no output — the runner has no read timeout on the Ollama
+  call, and writes its report only at the end, so nothing was salvaged. Still no
+  weakened-prompt result. Diagnosis and the proposed fix: `docs/NOTES.md` (Phase 6.4,
+  "The weakened run wedges"). Next attempt should run on the RTX 4090 box rather than
+  local CPU; that needs the repo transferred and the corpus moved by `pg_dump`.
 
 ---
 
