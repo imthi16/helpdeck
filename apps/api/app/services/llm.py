@@ -128,9 +128,16 @@ class LiteLLMProvider:
         "high demand",
     )
 
-    def __init__(self, api_key: str | None = None, *, api_base: str | None = None) -> None:
+    def __init__(
+        self,
+        api_key: str | None = None,
+        *,
+        api_base: str | None = None,
+        timeout: float | None = None,
+    ) -> None:
         self._api_key = api_key
         self._api_base = api_base
+        self._timeout = timeout if timeout is not None else get_settings().llm_timeout_seconds
 
     @classmethod
     def _retry_delay(cls, error: Exception, attempt: int) -> float | None:
@@ -154,6 +161,8 @@ class LiteLLMProvider:
         payload: dict[str, Any] = {
             "model": model,
             "messages": [{"role": m.role, "content": m.content} for m in messages],
+            # Before **kwargs, so an explicit timeout= from a call site still wins.
+            "timeout": self._timeout,
             **kwargs,
         }
         if self._api_key:
@@ -207,7 +216,19 @@ class LiteLLMProvider:
             model,
             lambda: litellm.acompletion(**self._kwargs(model, messages, **kwargs), stream=True),
         )
-        async for chunk in response:
+        # The request timeout bounds the HTTP call; it does not bound the gap between
+        # two chunks of a stream the server has already accepted. A model evicted
+        # mid-generation leaves this loop awaiting a chunk that never arrives — the
+        # 7h16m wedge in docs/NOTES.md 6.4 — so every step gets its own deadline.
+        chunks = response.__aiter__()
+        while True:
+            try:
+                async with asyncio.timeout(self._timeout):
+                    chunk = await chunks.__anext__()
+            except StopAsyncIteration:
+                # Caught outside the timeout scope: leaking StopAsyncIteration out of
+                # an async generator would surface as a bare RuntimeError (PEP 479).
+                return
             delta = chunk.choices[0].delta
             piece = getattr(delta, "content", None)
             if piece:
