@@ -23,4 +23,9 @@ test("playground streams a cited answer and populates the debug panel", async ({
   // Debug panel populated with retrieved chunks and confidence.
   await expect(page.getByTestId("debug-chunks").locator("li").first()).toBeVisible();
   await expect(page.getByTestId("debug-confidence")).not.toHaveText("—");
+
+  // The trace row is always present. It reads "—" here because the E2E API runs
+  // with LANGFUSE_* blanked (see playwright.config.ts) — asserting an id would
+  // mean asserting against live telemetry.
+  await expect(page.getByTestId("debug-trace-id")).toBeVisible();
 });
