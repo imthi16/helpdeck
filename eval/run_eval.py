@@ -56,6 +56,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=f"items in flight (default: {DEFAULT_CONCURRENCY})",
     )
     parser.add_argument(
+        "--item-timeout",
+        type=float,
+        default=None,
+        help="seconds one item may take before it is recorded as an error "
+        "(default: 3 x LLM_TIMEOUT_SECONDS)",
+    )
+    parser.add_argument(
         "--no-db", action="store_true", help="skip the eval_runs row (report only)"
     )
     parser.add_argument(
@@ -98,6 +105,7 @@ async def main(argv: list[str] | None = None) -> int:
             thresholds=DEFAULT_THRESHOLDS if args.gate else None,
             persist=not args.no_db,
             report_path=Path(args.out) if args.out else None,
+            item_timeout=args.item_timeout,
         )
     except EvalSetupError as exc:
         print(f"eval setup failed: {exc}", file=sys.stderr)

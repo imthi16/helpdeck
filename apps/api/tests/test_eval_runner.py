@@ -6,6 +6,7 @@ report, the eval_runs row, and that scoring the pipeline left no trace in tenant
 data.
 """
 
+import asyncio
 import json
 import uuid
 from pathlib import Path
@@ -14,6 +15,9 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.agent.runner import build_dependencies
+from app.core.config import get_settings
+from app.core.db import unscoped_session_factory
 from app.models import Conversation, Escalation, EvalRun, EvalRunKind, Organization
 from app.services.embeddings import EmbeddingService
 from app.services.evaluation.dataset import GoldenItem
@@ -24,8 +28,10 @@ from app.services.evaluation.runner import (
     format_summary,
     resolve_org,
     run_eval,
+    stub_providers,
 )
 from app.services.ingestion.seed import seed_corpus
+from app.services.llm import LLMGateway
 from app.services.storage import LocalFileStorage
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -375,3 +381,157 @@ def test_summary_flags_a_hosted_run_that_fell_back_to_stub_embeddings() -> None:
 
     assert "HashingEmbeddingProvider" in text
     assert "ANTHROPIC_API_KEY alone does not supply embeddings" in text
+
+
+# --- resilience to a wedged item ---------------------------------------------
+#
+# On 2026-08-01 a 30-item run hung after 20 items and was killed after 7h16m,
+# losing every scored item: Ollama evicted a model mid-request, nothing bounded the
+# call, and gather() stranded the 20 completed results (docs/NOTES.md, Phase 6.4).
+# These reproduce that shape in under a second.
+
+
+class _HangingGateway:
+    """A gateway that wedges on one question and behaves normally on the rest.
+
+    Wraps a real gateway so non-wedged items still score for real — the point of
+    the watchdog is that the rest of the run completes, which a fully-fake gateway
+    could not demonstrate.
+    """
+
+    def __init__(self, inner, hang_on: str) -> None:
+        self._inner = inner
+        self._hang_on = hang_on
+
+    def _wedged(self, messages) -> bool:
+        return any(self._hang_on in msg.content for msg in messages)
+
+    @property
+    def provider_name(self) -> str:
+        return self._inner.provider_name
+
+    def model_for(self, route):
+        return self._inner.model_for(route)
+
+    async def complete(self, messages, **kwargs):
+        if self._wedged(messages):
+            await asyncio.Event().wait()  # never resolves, exactly like the incident
+        return await self._inner.complete(messages, **kwargs)
+
+    def stream(self, messages, **kwargs):
+        if self._wedged(messages):
+
+            async def hang():
+                await asyncio.Event().wait()
+                yield ""  # pragma: no cover
+
+            return hang()
+        return self._inner.stream(messages, **kwargs)
+
+
+async def test_a_wedged_item_times_out_and_the_rest_of_the_run_completes(
+    db_sessionmaker: Sessionmaker, seeded: uuid.UUID, tmp_path: Path
+) -> None:
+    """The incident, as a one-second test."""
+    deps = build_dependencies(
+        session_factory=unscoped_session_factory(db_sessionmaker),
+        gateway=_HangingGateway(LLMGateway(), hang_on="CEO's shoe size"),
+    )
+
+    report = await run_eval(
+        items=[ANSWERABLE, UNANSWERABLE, SECOND_ANSWERABLE],
+        sessionmaker=db_sessionmaker,
+        org_id=seeded,
+        deps=deps,
+        concurrency=3,
+        item_timeout=0.3,
+        persist=False,
+        report_path=tmp_path / "wedged.json",
+    )
+
+    wedged = next(i for i in report.items if i.item_id == UNANSWERABLE.id)
+    assert wedged.error is not None and wedged.error.startswith("TimeoutError")
+    assert report.counts["errors"] == 1
+    # The whole point: the other two items still produced scores.
+    assert all(i.error is None for i in report.items if i.item_id != UNANSWERABLE.id)
+    assert report.metrics["faithfulness"] is not None
+    assert (tmp_path / "wedged.json").exists()
+
+
+async def test_the_watchdog_does_not_charge_an_item_for_waiting_on_a_slot(
+    db_sessionmaker: Sessionmaker, seeded: uuid.UUID, tmp_path: Path
+) -> None:
+    """Queueing for a concurrency slot is legitimate time. If the timeout were
+    placed outside the semaphore, items 2..N would inherit their predecessors'
+    latency and fail en masse — at concurrency 4 that is items 5..30."""
+    report = await run_eval(
+        items=[ANSWERABLE, UNANSWERABLE, SECOND_ANSWERABLE],
+        sessionmaker=db_sessionmaker,
+        org_id=seeded,
+        concurrency=1,
+        item_timeout=20.0,
+        persist=False,
+        report_path=tmp_path / "queued.json",
+    )
+
+    assert report.counts["errors"] == 0
+
+
+async def test_an_exception_escaping_score_item_is_recorded_not_raised(
+    db_sessionmaker: Sessionmaker, seeded: uuid.UUID, tmp_path: Path, monkeypatch
+) -> None:
+    """gather(return_exceptions=True): one unforeseen escape must not strand every
+    sibling's already-computed result, which is what the 2026-08-01 wedge did."""
+    from app.services.evaluation import runner as runner_module
+
+    real = runner_module.score_item
+
+    async def explode_on_one(deps, *, org_id, item, embedding_service, judge_route):
+        if item.id == SECOND_ANSWERABLE.id:
+            raise MemoryError("simulated")
+        return await real(
+            deps,
+            org_id=org_id,
+            item=item,
+            embedding_service=embedding_service,
+            judge_route=judge_route,
+        )
+
+    monkeypatch.setattr(runner_module, "score_item", explode_on_one)
+
+    report = await run_eval(
+        items=[ANSWERABLE, SECOND_ANSWERABLE],
+        sessionmaker=db_sessionmaker,
+        org_id=seeded,
+        persist=False,
+        report_path=tmp_path / "escaped.json",
+    )
+
+    assert len(report.items) == 2, "every requested item must produce a row"
+    exploded = next(i for i in report.items if i.item_id == SECOND_ANSWERABLE.id)
+    assert exploded.error == "MemoryError: simulated"
+    assert report.counts["errors"] == 1
+
+
+async def test_the_timeout_budgets_are_recorded_in_the_environment(
+    db_sessionmaker: Sessionmaker, seeded: uuid.UUID, tmp_path: Path
+) -> None:
+    """Two runs are only comparable when the bounds match — a tight bound converts
+    slow-but-healthy items into errors that aggregate then excludes."""
+    report = await run_eval(
+        items=[ANSWERABLE],
+        sessionmaker=db_sessionmaker,
+        org_id=seeded,
+        item_timeout=123.0,
+        persist=False,
+        report_path=tmp_path / "env.json",
+    )
+
+    assert report.environment["item_timeout_seconds"] == 123.0
+    assert report.environment["llm_timeout_seconds"] == get_settings().llm_timeout_seconds
+    # The budgets are floats, so the gate's string-valued stub scan cannot mistake
+    # one for a provider name — it still reports exactly the two offline stubs.
+    assert stub_providers(report.environment) == [
+        "embedding_provider=HashingEmbeddingProvider",
+        "llm_provider=OfflineGroundedProvider",
+    ]

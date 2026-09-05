@@ -123,6 +123,7 @@ def environment_labels(
     deps: AgentDependencies,
     judge_route: LLMRoute = m.JUDGE_ROUTE,
     embedding_service: EmbeddingService | None = None,
+    item_timeout: float | None = None,
 ) -> dict[str, Any]:
     """What produced the scores. A run without this is an unreadable number.
 
@@ -146,6 +147,11 @@ def environment_labels(
         "reranker": settings.reranker,
         "retrieval_top_n": deps.retrieval_top_n,
         "faithfulness_threshold": deps.faithfulness_threshold,
+        # Same argument as judge_model: a run scored under a 60s call bound is not
+        # the same experiment as one under 600s, because the tight bound converts
+        # slow-but-healthy items into errors that aggregate then excludes.
+        "llm_timeout_seconds": settings.llm_timeout_seconds,
+        "item_timeout_seconds": item_timeout,
     }
 
 
@@ -213,15 +219,14 @@ def missing_documents(items: Sequence[GoldenItem], available_titles: set[str]) -
     return expected - available_titles
 
 
-async def score_item(
-    deps: AgentDependencies,
-    *,
-    org_id: uuid.UUID,
-    item: GoldenItem,
-    embedding_service: EmbeddingService,
-    judge_route: LLMRoute = m.JUDGE_ROUTE,
-) -> EvalItemResult:
-    result = EvalItemResult(
+def blank_result(item: GoldenItem) -> EvalItemResult:
+    """An unscored result skeleton for ``item``.
+
+    Shared by ``score_item`` and ``failed_result`` so an item that never ran and one
+    that ran and failed are the same shape — ``aggregate`` excludes both from every
+    average on ``error is not None`` alone.
+    """
+    return EvalItemResult(
         item_id=item.id,
         question=item.question,
         answerable=item.answerable,
@@ -232,6 +237,24 @@ async def score_item(
         refused=False,
         citation_count=0,
     )
+
+
+def failed_result(item: GoldenItem, error: str) -> EvalItemResult:
+    """A result recording that ``item`` could not be scored, and why."""
+    result = blank_result(item)
+    result.error = error
+    return result
+
+
+async def score_item(
+    deps: AgentDependencies,
+    *,
+    org_id: uuid.UUID,
+    item: GoldenItem,
+    embedding_service: EmbeddingService,
+    judge_route: LLMRoute = m.JUDGE_ROUTE,
+) -> EvalItemResult:
+    result = blank_result(item)
     started = time.perf_counter()
     # The item id doubles as the Langfuse session so a run's traces group together
     # and per-item scores land next to the turn that produced them.
@@ -368,6 +391,7 @@ async def run_eval(
     thresholds: Sequence[Threshold] | None = None,
     persist: bool = True,
     report_path: Path | None = None,
+    item_timeout: float | None = None,
 ) -> EvalReport:
     """Score ``items`` against the pipeline, write the report, record the run."""
     if not items:
@@ -385,18 +409,49 @@ async def run_eval(
     started_at = dt.datetime.now(dt.UTC)
     started = time.perf_counter()
     semaphore = asyncio.Semaphore(max(1, concurrency))
+    # A scored item makes at most three strong-route calls (streamed answer,
+    # faithfulness, answer_relevancy) plus two cheap ones, each already bounded by
+    # LLM_TIMEOUT_SECONDS. Their sum is the natural item bound — so this watchdog can
+    # only fire when that per-call bound has already failed to, which is its whole job.
+    resolved_item_timeout = (
+        item_timeout if item_timeout is not None else 3 * get_settings().llm_timeout_seconds
+    )
 
     async def bounded(item: GoldenItem) -> EvalItemResult:
+        # The timeout goes INSIDE the semaphore: time spent queueing for a
+        # concurrency slot is legitimate, and charging it to the item would fail
+        # items 5..N en masse at concurrency 4. It goes OUTSIDE score_item because
+        # asyncio.timeout cancels by injecting CancelledError, a BaseException that
+        # score_item's two `except Exception` guards deliberately cannot absorb — so
+        # the TimeoutError surfaces here, at exactly one place.
         async with semaphore:
-            return await score_item(
-                deps,
-                org_id=resolved_org,
-                item=item,
-                embedding_service=embedding_service,
-                judge_route=judge_route,
-            )
+            try:
+                async with asyncio.timeout(resolved_item_timeout):
+                    return await score_item(
+                        deps,
+                        org_id=resolved_org,
+                        item=item,
+                        embedding_service=embedding_service,
+                        judge_route=judge_route,
+                    )
+            except TimeoutError:
+                logger.warning(
+                    "eval_item_timed_out", item_id=item.id, seconds=resolved_item_timeout
+                )
+                return failed_result(
+                    item, f"TimeoutError: item exceeded {resolved_item_timeout:.0f}s"
+                )
 
-    results = await asyncio.gather(*(bounded(item) for item in items))
+    # return_exceptions so one unforeseen escape (a MemoryError, a bug in a guard)
+    # cannot strand every sibling's already-computed result the way the 2026-08-01
+    # wedge did — every requested item produces a row, and counts["errors"] is honest.
+    outcomes = await asyncio.gather(*(bounded(item) for item in items), return_exceptions=True)
+    results = [
+        outcome
+        if isinstance(outcome, EvalItemResult)
+        else failed_result(item, f"{type(outcome).__name__}: {outcome}")
+        for item, outcome in zip(items, outcomes, strict=True)
+    ]
     duration_ms = int((time.perf_counter() - started) * 1000)
 
     metrics, counts = aggregate(results)
@@ -409,7 +464,9 @@ async def run_eval(
         duration_ms=duration_ms,
         metrics=metrics,
         counts=counts,
-        environment=environment_labels(deps, judge_route, embedding_service),
+        environment=environment_labels(
+            deps, judge_route, embedding_service, item_timeout=resolved_item_timeout
+        ),
         git_sha=git_sha(),
         items=list(results),
     )
