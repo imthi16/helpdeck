@@ -151,3 +151,37 @@ def test_a_gemini_key_selects_the_gemini_embedder(monkeypatch) -> None:
         assert isinstance(_default_provider(), GeminiEmbeddingProvider)
     finally:
         get_settings.cache_clear()
+
+
+async def test_embedding_calls_carry_a_timeout(monkeypatch) -> None:
+    """A provider that accepts a request and never answers would otherwise block the
+    batch forever — the failure mode that cost a 30-item eval run 7h16m
+    (docs/NOTES.md, Phase 6.4). Both litellm-backed providers must set a bound."""
+    import sys
+    import types
+
+    from app.services.embeddings import (
+        EMBEDDING_TIMEOUT_SECONDS,
+        GeminiEmbeddingProvider,
+        OllamaEmbeddingProvider,
+    )
+
+    fake = RecordingAembedding(dims=768)
+    monkeypatch.setitem(sys.modules, "litellm", types.SimpleNamespace(aembedding=fake))
+
+    await GeminiEmbeddingProvider("key", dims=768).embed(["a"], "gemini/gemini-embedding-001")
+    assert fake.kwargs["timeout"] == EMBEDDING_TIMEOUT_SECONDS
+
+    await OllamaEmbeddingProvider("http://localhost:11434").embed(["a"], "ollama/nomic-embed-text")
+    assert fake.kwargs["timeout"] == EMBEDDING_TIMEOUT_SECONDS
+
+
+def test_the_embedding_bound_stays_well_under_the_retry_budget() -> None:
+    """It is deliberately not LLM_TIMEOUT_SECONDS: _embed_batch_with_retry retries
+    any exception MAX_RETRIES times, so a 600s bound would cap a wedged batch at
+    ~40 minutes — worse than the wedge it replaces."""
+    from app.core.config import get_settings
+    from app.services.embeddings import EMBEDDING_TIMEOUT_SECONDS, MAX_RETRIES
+
+    worst_case = EMBEDDING_TIMEOUT_SECONDS * (MAX_RETRIES + 1)
+    assert worst_case < get_settings().llm_timeout_seconds
