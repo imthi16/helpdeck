@@ -176,15 +176,22 @@ async def test_embedding_calls_carry_a_timeout(monkeypatch) -> None:
     assert fake.kwargs["timeout"] == EMBEDDING_TIMEOUT_SECONDS
 
 
+#: A wedged embedding batch must fail inside single-digit minutes. Deliberately a
+#: literal and not LLM_TIMEOUT_SECONDS: that setting is meant to be retuned per host
+#: (60s hosted, 600s on CPU Ollama), so anchoring an invariant to it makes the
+#: invariant move with the deployment — this assertion is about the embedding path's
+#: own retry arithmetic, which does not.
+MAX_WEDGED_BATCH_SECONDS = 600.0
+
+
 def test_the_embedding_bound_stays_well_under_the_retry_budget() -> None:
-    """It is deliberately not LLM_TIMEOUT_SECONDS: _embed_batch_with_retry retries
-    any exception MAX_RETRIES times, so a 600s bound would cap a wedged batch at
-    ~40 minutes — worse than the wedge it replaces."""
-    from app.core.config import get_settings
+    """The bound is deliberately not LLM_TIMEOUT_SECONDS: _embed_batch_with_retry
+    retries any exception MAX_RETRIES times, so a 600s bound would cap a wedged batch
+    at ~40 minutes — worse than the wedge it replaces."""
     from app.services.embeddings import EMBEDDING_TIMEOUT_SECONDS, MAX_RETRIES
 
     worst_case = EMBEDDING_TIMEOUT_SECONDS * (MAX_RETRIES + 1)
-    assert worst_case < get_settings().llm_timeout_seconds
+    assert worst_case <= MAX_WEDGED_BATCH_SECONDS
 
 
 def test_the_chat_gateway_does_not_capture_embeddings(monkeypatch) -> None:
