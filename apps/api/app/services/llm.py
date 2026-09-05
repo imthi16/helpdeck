@@ -368,7 +368,39 @@ def _first_sentence(text: str) -> str:
 
 
 def _default_provider() -> LLMProvider:
+    """Pick the chat backend. Precedence, in order and on purpose:
+
+    1. ``LLM_API_BASE`` — an OpenAI-compatible gateway you configured by hand
+       (NaraRouter, OpenRouter, a LiteLLM proxy, vLLM). An endpoint you named
+       outranks one inferred from a key. This branch is also what makes the
+       chat-here/embeddings-elsewhere hybrid *decidable*: a gateway key and
+       ``GEMINI_API_KEY`` are both hosted keys, so without an explicit rule the
+       tie-break below would pick one and the pairing would work only by luck —
+       the way the Gemini-embeddings/Ollama-generation pairing did, which worked
+       solely because litellm's ``ollama_chat`` ignores an irrelevant api_key
+       (docs/NOTES.md, "Gemini as a hosted provider").
+    2. a hosted provider key, at that provider's own default endpoint.
+    3. Ollama, if a socket probe reaches it.
+    4. deterministic offline stubs, so the app always runs.
+
+    ``embeddings.py`` selects independently and this function does not influence
+    it — deliberate, not an oversight: the documented embedding model on these
+    gateways is 1536-dim and ``chunks.embedding`` is 768 wide (migration
+    8bb42227bfe1).
+    """
     settings = get_settings()
+    if settings.llm_api_base:
+        logger.info(
+            "llm_gateway_mode",
+            api_base=settings.llm_api_base,
+            authenticated=bool(settings.llm_api_key),
+        )
+        return LiteLLMProvider(settings.llm_api_key or None, api_base=settings.llm_api_base)
+    if settings.llm_api_key:
+        # A key with no endpoint would be handed to whichever provider the model
+        # prefix names — e.g. a gateway key sent to api.openai.com. Ignore it and
+        # say so, rather than authenticating against the wrong host.
+        logger.error("llm_api_key_without_base", reason="LLM_API_KEY set but LLM_API_BASE is empty")
     # Order is only a tie-break for the unusual case of several keys being set;
     # which models actually run is decided by LLM_CHEAP_MODEL / LLM_STRONG_MODEL,
     # whose litellm prefix has to match the key you supplied.

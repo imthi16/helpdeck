@@ -342,3 +342,60 @@ def test_a_timeout_is_not_retried_because_it_is_the_upper_bound() -> None:
         "litellm.APITimeoutError: Request timed out.",
     ):
         assert LiteLLMProvider._retry_delay(Exception(message), attempt=0) is None
+
+
+# --- OpenAI-compatible chat gateway ------------------------------------------
+
+
+def _selected(monkeypatch, **env):
+    """_default_provider() under a clean, explicit environment."""
+    from app.core.config import get_settings
+    from app.services.llm import _default_provider
+
+    for name in (
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "GEMINI_API_KEY",
+        "LLM_API_KEY",
+        "LLM_API_BASE",
+        "OLLAMA_BASE_URL",
+    ):
+        monkeypatch.setenv(name, env.get(name, ""))
+    get_settings.cache_clear()
+    try:
+        return _default_provider()
+    finally:
+        get_settings.cache_clear()
+
+
+def test_an_llm_api_base_selects_the_gateway_with_key_and_base(monkeypatch) -> None:
+    provider = _selected(
+        monkeypatch, LLM_API_BASE="https://gateway.example/v1", LLM_API_KEY="sk-test"
+    )
+
+    assert isinstance(provider, LiteLLMProvider)
+    payload = provider._kwargs("openai/some-alias", [LLMMessage("user", "hi")])
+    assert payload["api_base"] == "https://gateway.example/v1"
+    assert payload["api_key"] == "sk-test"
+
+
+def test_an_llm_api_base_outranks_a_hosted_provider_key(monkeypatch) -> None:
+    """The rule that makes the hybrid decidable: chat on the configured gateway,
+    embeddings independently on Gemini. Both are hosted keys, so without an explicit
+    precedence the tie-break would pick one and the pairing would work only by luck."""
+    provider = _selected(
+        monkeypatch,
+        GEMINI_API_KEY="gemini-key",
+        LLM_API_BASE="https://gateway.example/v1",
+        LLM_API_KEY="sk-gateway",
+    )
+
+    payload = provider._kwargs("openai/some-alias", [])
+    assert payload["api_base"] == "https://gateway.example/v1"
+    assert payload["api_key"] == "sk-gateway", "the Gemini key must not reach the gateway"
+
+
+def test_a_gateway_key_without_a_base_falls_through(monkeypatch) -> None:
+    """A key with no endpoint would otherwise be handed to whichever provider the
+    model prefix names — a gateway key sent to api.openai.com."""
+    assert isinstance(_selected(monkeypatch, LLM_API_KEY="sk-orphan"), OfflineGroundedProvider)

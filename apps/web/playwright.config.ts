@@ -42,6 +42,10 @@ export default defineConfig({
         ANTHROPIC_API_KEY: "",
         OPENAI_API_KEY: "",
         GEMINI_API_KEY: "",
+        // LLM_API_BASE is the first branch of _default_provider, so a stray value
+        // would capture the chat path ahead of every key blanked above.
+        LLM_API_KEY: "",
+        LLM_API_BASE: "",
       },
     },
     {

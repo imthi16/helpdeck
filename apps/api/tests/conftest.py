@@ -3,12 +3,22 @@ import os
 # Tests must be deterministic and never depend on a live model server, so pin the
 # AI stack to the offline stubs regardless of the developer's shell env or .env:
 # an empty OLLAMA_BASE_URL is treated as unreachable, and every hosted provider key
-# is blanked. Blanking the keys is load-bearing, not belt-and-braces — a key left
-# in apps/api/.env makes the suite issue real, billed, rate-limited API calls, which
-# is slow, non-deterministic, and silently voids this guarantee. Environment
-# variables outrank env_file in pydantic-settings, so setting them here wins.
+# and the generic gateway endpoint are blanked. This is load-bearing, not
+# belt-and-braces — a key left in apps/api/.env makes the suite issue real, billed,
+# rate-limited API calls, which is slow, non-deterministic, and silently voids this
+# guarantee. LLM_API_BASE matters most of all: it is the FIRST branch of
+# _default_provider, so a stray value captures the chat path ahead of every other
+# guard here. Environment variables outrank env_file in pydantic-settings, so
+# setting them here wins.
 os.environ["OLLAMA_BASE_URL"] = ""
-for _provider_key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "COHERE_API_KEY"):
+for _provider_key in (
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "GEMINI_API_KEY",
+    "COHERE_API_KEY",
+    "LLM_API_KEY",
+    "LLM_API_BASE",
+):
     os.environ[_provider_key] = ""
 
 import pytest  # noqa: E402

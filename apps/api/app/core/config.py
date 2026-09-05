@@ -69,6 +69,14 @@ class Settings(BaseSettings):
     # CPU-only Ollama (qwen2.5:7b at 410s, already under concurrency-4 contention);
     # hosted providers answer in seconds. Raise it on a slower box, don't remove it.
     llm_timeout_seconds: float = 600.0
+    # An OpenAI-compatible CHAT gateway (NaraRouter, OpenRouter, a LiteLLM proxy,
+    # vLLM). Set both, plus LLM_CHEAP_MODEL/LLM_STRONG_MODEL with litellm's `openai/`
+    # prefix. This selects chat ONLY — embeddings.py picks its provider
+    # independently and deliberately: these gateways serve text-embedding-3-small at
+    # 1536 dims and chunks.embedding is 768 wide, so routing embeddings here would
+    # need a migration and a full re-seed.
+    llm_api_base: str = ""
+    llm_api_key: str = ""
     reranker: str = "none"
     cohere_api_key: str = ""
 

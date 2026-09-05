@@ -185,3 +185,21 @@ def test_the_embedding_bound_stays_well_under_the_retry_budget() -> None:
 
     worst_case = EMBEDDING_TIMEOUT_SECONDS * (MAX_RETRIES + 1)
     assert worst_case < get_settings().llm_timeout_seconds
+
+
+def test_the_chat_gateway_does_not_capture_embeddings(monkeypatch) -> None:
+    """LLM_API_BASE selects chat only. These gateways serve text-embedding-3-small
+    at 1536 dims and chunks.embedding is 768 wide, so letting one capture embeddings
+    would need a migration and a full re-seed — the hybrid keeps Gemini here."""
+    from app.core.config import get_settings
+    from app.services.embeddings import GeminiEmbeddingProvider, _default_provider
+
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-key")
+    monkeypatch.setenv("LLM_API_BASE", "https://gateway.example/v1")
+    monkeypatch.setenv("LLM_API_KEY", "sk-gateway")
+    get_settings.cache_clear()
+    try:
+        assert isinstance(_default_provider(), GeminiEmbeddingProvider)
+    finally:
+        get_settings.cache_clear()
