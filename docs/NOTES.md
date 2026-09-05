@@ -699,6 +699,39 @@ pending permission, and the corpus should be moved by `pg_dump` of the local `he
 DB rather than re-seeded, so the run hits the **same 8-document corpus** the baseline
 used and the two numbers stay comparable.
 
+### 2026-09-05: a free Gemini key still cannot produce the baseline
+
+Measured, so nobody re-tries it. A key entitling `gemini-3.1-flash-lite`,
+`gemini-3.5-flash` and `gemini-embedding-001` @ 768 — the exact pair both workflows
+pin — ran the 30-item fast subset and **could not produce a baseline**:
+
+    items=30 answered=4 errors=26   (25 x 429 quota, 1 x watchdog)
+    faithfulness 1.000 over 4 items, refusal_accuracy "not measured"
+    gate passed=False, exit 1, 246s
+
+The provider names the cause exactly, which settles the earlier estimate:
+
+    Quota exceeded for metric: generate_content_free_tier_requests
+    limit: 20, model: gemini-3.5-flash
+    quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier
+
+A 2-item smoke was clean (43s, errors=0, faithfulness 1.0), so the pipeline and the
+Gemini wiring are fine — this is purely the 20/day cap against a subset needing ~60
+strong-route calls. **6.4's verify needs paid quota or a different gateway.**
+
+**The run is, incidentally, the best evidence the hardening works.** The same quota
+storm before this work would have looked like the 2026-08-01 wedge; instead:
+
+- the watchdog fired on `g019` after 180s stuck in retry backoff, rather than hanging;
+- the run *finished*, in 246s, with a written report naming all 26 failures;
+- `refusal_accuracy` came back **"not measured"** rather than 0.000 — all five
+  unanswerable items errored, so the population was empty, and `mean_or_none` refused
+  to report an unmeasured metric as a failing score;
+- the gate refused to pass on a mostly-errored run, and the CLI exited 1.
+
+A 1.000 faithfulness over 4 surviving items is exactly the kind of number that reads as
+healthy and is not; the gate not blessing it is the whole design working.
+
 ### NaraRouter as the hosted chat option
 
 `LLM_API_BASE` + `LLM_API_KEY` route chat through any OpenAI-compatible gateway, which
