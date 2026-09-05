@@ -193,3 +193,9 @@ def test_both_stubs_are_reported_together() -> None:
 def test_non_string_environment_values_do_not_crash_detection() -> None:
     """environment carries ints and floats too (embedding_dims, thresholds)."""
     assert stub_providers(REAL_ENV | {"embedding_dims": 768, "reranker": None}) == []
+
+
+def test_a_gateway_url_is_not_mistaken_for_a_stub() -> None:
+    """environment gained llm_api_base, a free-text string. The stub scan matches
+    exact provider names, so a URL must pass through it untouched."""
+    assert stub_providers(REAL_ENV | {"llm_api_base": "https://router.example/v1"}) == []

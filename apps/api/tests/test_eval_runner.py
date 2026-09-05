@@ -725,3 +725,20 @@ async def test_a_resumed_run_still_records_exactly_one_eval_runs_row(
         async with db_sessionmaker() as session:
             await session.delete(await session.get(EvalRun, rows[0].id))
             await session.commit()
+
+
+async def test_the_environment_records_the_chat_gateway_endpoint(
+    db_sessionmaker: Sessionmaker, seeded: uuid.UUID, tmp_path: Path
+) -> None:
+    """provider_name is "LiteLLMProvider" for Ollama, Gemini and any gateway alike,
+    and an alias is plan-dependent — an unlabelled run is an unreadable number."""
+    report = await run_eval(
+        items=[ANSWERABLE],
+        sessionmaker=db_sessionmaker,
+        org_id=seeded,
+        persist=False,
+        report_path=tmp_path / "r.json",
+    )
+
+    # No gateway configured under the test env, so it records None rather than "".
+    assert report.environment["llm_api_base"] is None

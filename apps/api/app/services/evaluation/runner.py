@@ -142,6 +142,11 @@ def environment_labels(
     settings = get_settings()
     return {
         "llm_provider": deps.gateway.provider_name,
+        # Which endpoint served the chat models. provider_name is "LiteLLMProvider"
+        # for Ollama, Gemini and any OpenAI-compatible gateway alike, and a model
+        # alias is plan-dependent — the same alias on a different plan is a
+        # different model. None when no gateway is configured. Never the key.
+        "llm_api_base": settings.llm_api_base or None,
         "cheap_model": deps.gateway.model_for(LLMRoute.cheap),
         "strong_model": deps.gateway.model_for(LLMRoute.strong),
         "judge_model": deps.gateway.model_for(judge_route),
