@@ -54,6 +54,21 @@ class LLMRoute(StrEnum):
     strong = "strong"
 
 
+def price_model_name(model: str) -> str:
+    """The model name stripped of its litellm provider prefix.
+
+    The prefix (``gemini/``, ``ollama_chat/``, ``anthropic/``) is a *routing*
+    concern: litellm needs it to pick a backend. Langfuse prices a generation by
+    regex-matching the span's ``model`` field against its model definitions, whose
+    built-in patterns are bare names — so a prefixed string matches nothing and the
+    trace renders no cost at all. Only the span gets the stripped form; the string
+    handed to the provider keeps its prefix.
+
+    Splits once, so a model whose own name contains a slash keeps the remainder.
+    """
+    return model.split("/", 1)[1] if "/" in model else model
+
+
 @dataclass
 class LLMMessage:
     role: str  # "system" | "user" | "assistant"
@@ -453,8 +468,11 @@ class LLMGateway:
             with observation(
                 "llm.complete",
                 as_type="generation",
-                model=model,
+                model=price_model_name(model),
                 input=[m.__dict__ for m in messages],
+                # The routed identifier, kept so the prefix stripped above for
+                # pricing is not lost from the trace.
+                metadata={"model_id": model},
             ) as generation:
                 text, usage = await self._provider.complete(model, messages, **kwargs)
                 generation.update(
@@ -491,7 +509,11 @@ class LLMGateway:
         # locally with tiktoken and the span says so rather than implying the
         # provider reported them.
         with observation(
-            "llm.stream", as_type="generation", model=model, input=[m.__dict__ for m in messages]
+            "llm.stream",
+            as_type="generation",
+            model=price_model_name(model),
+            input=[m.__dict__ for m in messages],
+            metadata={"model_id": model},
         ) as generation:
             async for piece in self._provider.stream(model, messages, **kwargs):
                 pieces.append(piece)
@@ -502,7 +524,13 @@ class LLMGateway:
             generation.update(
                 output=text,
                 usage_details={"input": tokens_in, "output": tokens_out},
-                metadata={"usage_source": "estimated (tiktoken); streamed response has no usage"},
+                # update() replaces metadata rather than merging, so model_id is
+                # repeated here — losing it would leave the stripped model name with
+                # nothing recording which backend actually served the call.
+                metadata={
+                    "model_id": model,
+                    "usage_source": "estimated (tiktoken); streamed response has no usage",
+                },
             )
         logger.info(
             "llm_stream",

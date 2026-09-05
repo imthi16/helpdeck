@@ -46,6 +46,10 @@ export default defineConfig({
         // would capture the chat path ahead of every key blanked above.
         LLM_API_KEY: "",
         LLM_API_BASE: "",
+        // Same reasoning as the model keys: a Langfuse key in apps/api/.env would
+        // make the E2E suite emit real telemetry into someone's project.
+        LANGFUSE_PUBLIC_KEY: "",
+        LANGFUSE_SECRET_KEY: "",
       },
     },
     {

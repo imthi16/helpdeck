@@ -18,6 +18,11 @@ for _provider_key in (
     "COHERE_API_KEY",
     "LLM_API_KEY",
     "LLM_API_BASE",
+    # Not a model provider, but the same hazard: a real key here would make the
+    # suite emit telemetry into someone's Langfuse project. Tests that exercise
+    # tracing patch get_langfuse directly.
+    "LANGFUSE_PUBLIC_KEY",
+    "LANGFUSE_SECRET_KEY",
 ):
     os.environ[_provider_key] = ""
 

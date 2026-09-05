@@ -7,6 +7,7 @@ from arq.connections import RedisSettings
 
 from app.core.config import get_settings
 from app.core.db import app_session_factory, async_session_factory
+from app.services import tracing
 from app.services.embeddings import EmbeddingService
 from app.services.llm import LLMGateway
 from app.services.storage import get_storage
@@ -25,7 +26,12 @@ async def startup(ctx: dict[str, Any]) -> None:
 
 
 async def shutdown(ctx: dict[str, Any]) -> None:
-    return None
+    # The nightly quality sweep emits Langfuse scores (services/evaluation/online.py),
+    # and the SDK buffers them. Without this they are lost when the worker exits —
+    # silently, since score emission is best-effort by design, so a dropped score
+    # looks exactly like a night with nothing scorable. docs/observability.md states
+    # the convention; this is the process that was not honouring it.
+    tracing.flush()
 
 
 class WorkerSettings:

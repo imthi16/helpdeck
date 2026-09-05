@@ -25,6 +25,7 @@ export default function PlaygroundPage() {
   const [input, setInput] = useState("");
   const [status, setStatus] = useState<string | null>(null);
   const [debug, setDebug] = useState<DebugInfo | null>(null);
+  const [copiedTrace, setCopiedTrace] = useState(false);
   const [streaming, setStreaming] = useState(false);
   const conversationId = useRef<string | undefined>(undefined);
 
@@ -186,6 +187,37 @@ export default function PlaygroundPage() {
                   <dt className="eyebrow self-center">Tokens</dt>
                   <dd className="data text-right text-[0.75rem]">
                     {debug.tokens_in ?? 0} in / {debug.tokens_out ?? 0} out
+                  </dd>
+                  {/* The turn's Langfuse trace. Copyable rather than a link: the
+                      browser has no LANGFUSE_HOST, and guessing one is worse than an
+                      id you can paste into whichever project you configured. Absent
+                      when tracing is off, or when the answer came from cache — a
+                      cached turn runs no agent and so has no trace of its own. */}
+                  <dt className="eyebrow self-center">Trace</dt>
+                  <dd className="text-right">
+                    {debug.trace_id ? (
+                      <button
+                        type="button"
+                        data-testid="debug-trace-id"
+                        title={`Copy trace id ${debug.trace_id}`}
+                        onClick={() => {
+                          void navigator.clipboard?.writeText(debug.trace_id ?? "");
+                          setCopiedTrace(true);
+                          window.setTimeout(() => setCopiedTrace(false), 1500);
+                        }}
+                        className="data max-w-full cursor-pointer truncate text-[0.7rem] underline decoration-dotted underline-offset-2 hover:opacity-70"
+                      >
+                        {copiedTrace ? "Copied" : debug.trace_id}
+                      </button>
+                    ) : (
+                      <span
+                        data-testid="debug-trace-id"
+                        className="data text-[0.7rem]"
+                        title="No trace: tracing is off, or this answer was served from cache"
+                      >
+                        —
+                      </span>
+                    )}
                   </dd>
                 </dl>
 

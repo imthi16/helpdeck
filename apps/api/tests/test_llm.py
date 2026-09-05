@@ -399,3 +399,21 @@ def test_a_gateway_key_without_a_base_falls_through(monkeypatch) -> None:
     """A key with no endpoint would otherwise be handed to whichever provider the
     model prefix names — a gateway key sent to api.openai.com."""
     assert isinstance(_selected(monkeypatch, LLM_API_KEY="sk-orphan"), OfflineGroundedProvider)
+
+
+# --- model naming for cost resolution -----------------------------------------
+
+
+def test_price_model_name_strips_the_litellm_provider_prefix() -> None:
+    """Langfuse prices a generation by regex-matching the span's model field against
+    definitions whose built-in patterns are bare names, so a routing prefix matches
+    nothing and the trace renders no cost at all."""
+    from app.services.llm import price_model_name
+
+    assert price_model_name("gemini/gemini-3.5-flash") == "gemini-3.5-flash"
+    assert price_model_name("ollama_chat/llama3.2:3b") == "llama3.2:3b"
+    assert price_model_name("anthropic/claude-haiku-4-5") == "claude-haiku-4-5"
+    # Already bare — the common hosted form — passes through untouched.
+    assert price_model_name("gpt-4o") == "gpt-4o"
+    # Split once only, so a name that itself contains a slash keeps the remainder.
+    assert price_model_name("openrouter/vendor/model-x") == "vendor/model-x"
