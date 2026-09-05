@@ -94,6 +94,12 @@ class EvalReport:
     #: Gate verdict when thresholds were applied (6.4); None when they were not.
     #: Kept on the report so the JSON artifact records what CI decided and why.
     gate: dict[str, Any] | None = None
+    #: Set when items were carried over from a previous run's JSONL sink. Both
+    #: matter for reading the numbers: ``duration_ms`` then covers only the
+    #: continuation, and the reused items were scored by an earlier process —
+    #: possibly at a different ``git_sha``.
+    resumed_from: str | None = None
+    resumed_item_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -392,6 +398,7 @@ async def run_eval(
     persist: bool = True,
     report_path: Path | None = None,
     item_timeout: float | None = None,
+    resume_path: Path | None = None,
 ) -> EvalReport:
     """Score ``items`` against the pipeline, write the report, record the run."""
     if not items:
@@ -417,6 +424,29 @@ async def run_eval(
         item_timeout if item_timeout is not None else 3 * get_settings().llm_timeout_seconds
     )
 
+    # Resolved before the gather, not after it as the report path used to be: the
+    # sink has to be open while items are scoring, since its whole purpose is to
+    # survive a kill that never reaches the end of the run.
+    target = report_path or default_report_path(started_at, subset)
+    sink = sink_path_for(target) if target is not None else None
+    done = load_results(resume_path) if resume_path is not None else {}
+    pending = [item for item in items if item.id not in done]
+    if done:
+        logger.info("eval_resuming", resumed=len(done), pending=len(pending), sink=str(resume_path))
+
+    if sink is not None:
+        sink.parent.mkdir(parents=True, exist_ok=True)
+    # Appended and flushed as each item lands, so a kill costs only what was still
+    # in flight. No lock: one event loop, and there is no await between the write
+    # and the flush.
+    sink_handle = sink.open("a") if sink is not None else None
+
+    def record(result: EvalItemResult) -> None:
+        if sink_handle is None:
+            return
+        sink_handle.write(json.dumps(asdict(result), sort_keys=True) + "\n")
+        sink_handle.flush()
+
     async def bounded(item: GoldenItem) -> EvalItemResult:
         # The timeout goes INSIDE the semaphore: time spent queueing for a
         # concurrency slot is legitimate, and charging it to the item would fail
@@ -427,7 +457,7 @@ async def run_eval(
         async with semaphore:
             try:
                 async with asyncio.timeout(resolved_item_timeout):
-                    return await score_item(
+                    result = await score_item(
                         deps,
                         org_id=resolved_org,
                         item=item,
@@ -438,20 +468,33 @@ async def run_eval(
                 logger.warning(
                     "eval_item_timed_out", item_id=item.id, seconds=resolved_item_timeout
                 )
-                return failed_result(
+                result = failed_result(
                     item, f"TimeoutError: item exceeded {resolved_item_timeout:.0f}s"
                 )
+            record(result)
+            return result
 
     # return_exceptions so one unforeseen escape (a MemoryError, a bug in a guard)
     # cannot strand every sibling's already-computed result the way the 2026-08-01
     # wedge did — every requested item produces a row, and counts["errors"] is honest.
-    outcomes = await asyncio.gather(*(bounded(item) for item in items), return_exceptions=True)
-    results = [
-        outcome
-        if isinstance(outcome, EvalItemResult)
-        else failed_result(item, f"{type(outcome).__name__}: {outcome}")
-        for item, outcome in zip(items, outcomes, strict=True)
-    ]
+    try:
+        outcomes = await asyncio.gather(
+            *(bounded(item) for item in pending), return_exceptions=True
+        )
+    finally:
+        if sink_handle is not None:
+            sink_handle.close()
+    fresh = {
+        item.id: (
+            outcome
+            if isinstance(outcome, EvalItemResult)
+            else failed_result(item, f"{type(outcome).__name__}: {outcome}")
+        )
+        for item, outcome in zip(pending, outcomes, strict=True)
+    }
+    # Ordered by `items`, not by completion, so a resumed report is byte-comparable
+    # with one produced in a single pass.
+    results = [done.get(item.id) or fresh[item.id] for item in items]
     duration_ms = int((time.perf_counter() - started) * 1000)
 
     metrics, counts = aggregate(results)
@@ -469,6 +512,8 @@ async def run_eval(
         ),
         git_sha=git_sha(),
         items=list(results),
+        resumed_from=str(resume_path) if done else None,
+        resumed_item_count=len(done),
     )
 
     # The gate runs before the report is written and the row recorded, so both
@@ -477,9 +522,15 @@ async def run_eval(
     if gate_result is not None:
         report.gate = gate_summary(gate_result)
 
-    target = report_path or default_report_path(started_at, subset)
     if target is not None:
         report.report_path = str(write_report(report, target))
+        # Only once the report exists: a stale sink must never silently seed a later
+        # run, and until this point it is the only record of the work.
+        if sink is not None:
+            sink.unlink(missing_ok=True)
+    # Exactly one insert, on the merged report. The killed run inserted none, so a
+    # resumed run still yields one row — eval_runs is the record of a *finished*
+    # run, and a half-run row would corrupt 6.6's Quality-card trend.
     if persist:
         await record_run(sessionmaker, report, passed=gate_result.passed if gate_result else None)
     logger.info(
@@ -513,6 +564,45 @@ def gate_summary(result: GateResult) -> dict[str, Any]:
 def default_report_path(started_at: dt.datetime, subset: str) -> Path:
     stamp = started_at.strftime("%Y%m%dT%H%M%SZ")
     return REPORTS_DIR / f"eval-{stamp}-{subset}.json"
+
+
+def sink_path_for(report_path: Path) -> Path:
+    """Where the per-item sink lives for a given report path."""
+    return report_path.with_suffix(".jsonl")
+
+
+def load_results(path: Path) -> dict[str, EvalItemResult]:
+    """Completed items from a previous run's JSONL sink, keyed by item id.
+
+    Last line per id wins, so re-scoring an item supersedes its earlier row and a
+    resume can be run repeatedly against the same file.
+
+    Items carrying an ``error`` are deliberately **not** returned: they contributed
+    nothing to the metrics (``aggregate`` excludes them) and a resume that carried
+    them forward would keep the CLI exiting 1 for a failure it never retried. This
+    is what makes ``--resume`` the retry policy for a timed-out item — re-paying one
+    item, rather than re-paying one call the way a provider-level retry would.
+
+    An unparseable line is skipped with a warning rather than raising: a run killed
+    mid-write leaves a truncated final line, and refusing to read the file would
+    defeat the entire point of having written it.
+    """
+    results: dict[str, EvalItemResult] = {}
+    if not path.exists():
+        return results
+    for number, line in enumerate(path.read_text().splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            result = EvalItemResult(**json.loads(line))
+        except (json.JSONDecodeError, TypeError) as exc:
+            logger.warning("eval_sink_line_skipped", path=str(path), line=number, error=str(exc))
+            continue
+        if result.error is None:
+            results[result.item_id] = result
+        else:
+            results.pop(result.item_id, None)
+    return results
 
 
 def write_report(report: EvalReport, path: Path) -> Path:
@@ -553,6 +643,14 @@ def format_summary(report: EvalReport) -> str:
     lines = [
         f"Eval run — dataset={report.dataset} subset={report.subset} items={report.item_count}",
         f"  org={report.org_id}  duration={report.duration_ms / 1000:.1f}s",
+        *(
+            [
+                f"  resumed {report.resumed_item_count} item(s) from "
+                f"{report.resumed_from} — duration covers the continuation only"
+            ]
+            if report.resumed_from
+            else []
+        ),
         "",
         f"  {'metric':<22}{'score':>8}",
         f"  {'-' * 30}",

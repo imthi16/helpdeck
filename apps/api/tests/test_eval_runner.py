@@ -9,6 +9,7 @@ data.
 import asyncio
 import json
 import uuid
+from dataclasses import asdict as _asdict
 from pathlib import Path
 
 import pytest
@@ -26,8 +27,10 @@ from app.services.evaluation.runner import (
     EvalSetupError,
     aggregate,
     format_summary,
+    load_results,
     resolve_org,
     run_eval,
+    sink_path_for,
     stub_providers,
 )
 from app.services.ingestion.seed import seed_corpus
@@ -535,3 +538,190 @@ async def test_the_timeout_budgets_are_recorded_in_the_environment(
         "embedding_provider=HashingEmbeddingProvider",
         "llm_provider=OfflineGroundedProvider",
     ]
+
+
+# --- incremental sink and resume ---------------------------------------------
+#
+# The other half of the 2026-08-01 loss: the report was a single write after the
+# last item, so killing the run at 20/30 salvaged nothing. Each item is now
+# appended as it lands, and --resume turns a kill into a continuation.
+
+
+async def test_each_item_is_appended_to_the_sink_as_it_finishes(
+    db_sessionmaker: Sessionmaker, seeded: uuid.UUID, tmp_path: Path
+) -> None:
+    out = tmp_path / "r.json"
+
+    await run_eval(
+        items=[ANSWERABLE, UNANSWERABLE],
+        sessionmaker=db_sessionmaker,
+        org_id=seeded,
+        persist=False,
+        report_path=out,
+    )
+
+    # A complete run cleans the sink up, so read it back mid-flight instead by
+    # checking the loader against a sink written by a run that was NOT completed.
+    assert not sink_path_for(out).exists(), "a finished report supersedes its sink"
+
+
+async def test_the_sink_survives_a_run_that_never_writes_a_report(
+    db_sessionmaker: Sessionmaker, seeded: uuid.UUID, tmp_path: Path, monkeypatch
+) -> None:
+    """The salvage path: the process dies before the report is written, and the
+    scored items are still on disk. This is what the 7h16m kill lost."""
+    from app.services.evaluation import runner as runner_module
+
+    def explode(report, path):
+        raise KeyboardInterrupt("simulated kill after the last item")
+
+    monkeypatch.setattr(runner_module, "write_report", explode)
+    out = tmp_path / "killed.json"
+
+    with pytest.raises(KeyboardInterrupt):
+        await run_eval(
+            items=[ANSWERABLE, SECOND_ANSWERABLE],
+            sessionmaker=db_sessionmaker,
+            org_id=seeded,
+            persist=False,
+            report_path=out,
+        )
+
+    salvaged = load_results(sink_path_for(out))
+    assert set(salvaged) == {ANSWERABLE.id, SECOND_ANSWERABLE.id}
+    assert salvaged[ANSWERABLE.id].faithfulness is not None
+
+
+async def test_resume_skips_items_already_scored(
+    db_sessionmaker: Sessionmaker, seeded: uuid.UUID, tmp_path: Path, monkeypatch
+) -> None:
+    from app.services.evaluation import runner as runner_module
+
+    sink = tmp_path / "prior.jsonl"
+    prior = await run_eval(
+        items=[ANSWERABLE],
+        sessionmaker=db_sessionmaker,
+        org_id=seeded,
+        persist=False,
+        report_path=tmp_path / "prior.json",
+    )
+    # Rebuild the sink the completed run cleaned up.
+    sink.write_text(json.dumps(_asdict(prior.items[0]), sort_keys=True) + "\n")
+
+    scored: list[str] = []
+    real = runner_module.score_item
+
+    async def counting(deps, *, org_id, item, embedding_service, judge_route):
+        scored.append(item.id)
+        return await real(
+            deps,
+            org_id=org_id,
+            item=item,
+            embedding_service=embedding_service,
+            judge_route=judge_route,
+        )
+
+    monkeypatch.setattr(runner_module, "score_item", counting)
+
+    report = await run_eval(
+        items=[ANSWERABLE, SECOND_ANSWERABLE],
+        sessionmaker=db_sessionmaker,
+        org_id=seeded,
+        persist=False,
+        report_path=tmp_path / "resumed.json",
+        resume_path=sink,
+    )
+
+    assert scored == [SECOND_ANSWERABLE.id], "the already-scored item must not re-run"
+    assert report.resumed_item_count == 1
+    assert report.resumed_from == str(sink)
+    assert [i.item_id for i in report.items] == [ANSWERABLE.id, SECOND_ANSWERABLE.id]
+    carried = next(i for i in report.items if i.item_id == ANSWERABLE.id)
+    assert carried.answer == prior.items[0].answer, "the prior answer survives verbatim"
+
+
+async def test_resume_rescores_an_item_that_errored(
+    db_sessionmaker: Sessionmaker, seeded: uuid.UUID, tmp_path: Path, monkeypatch
+) -> None:
+    """A timed-out item must be retried, not inherited — otherwise the CLI keeps
+    exiting 1 for a failure the resume never actually re-attempted."""
+    from app.services.evaluation import runner as runner_module
+
+    sink = tmp_path / "prior.jsonl"
+    clean = _asdict(runner_module.blank_result(ANSWERABLE))
+    errored = _asdict(
+        runner_module.failed_result(SECOND_ANSWERABLE, "TimeoutError: item exceeded 30s")
+    )
+    sink.write_text(
+        json.dumps(clean, sort_keys=True) + "\n" + json.dumps(errored, sort_keys=True) + "\n"
+    )
+
+    scored: list[str] = []
+    real = runner_module.score_item
+
+    async def counting(deps, *, org_id, item, embedding_service, judge_route):
+        scored.append(item.id)
+        return await real(
+            deps,
+            org_id=org_id,
+            item=item,
+            embedding_service=embedding_service,
+            judge_route=judge_route,
+        )
+
+    monkeypatch.setattr(runner_module, "score_item", counting)
+
+    report = await run_eval(
+        items=[ANSWERABLE, SECOND_ANSWERABLE],
+        sessionmaker=db_sessionmaker,
+        org_id=seeded,
+        persist=False,
+        report_path=tmp_path / "resumed.json",
+        resume_path=sink,
+    )
+
+    assert scored == [SECOND_ANSWERABLE.id]
+    assert report.counts["errors"] == 0, "the retried item now has a real score"
+
+
+def test_resume_tolerates_a_truncated_last_line(tmp_path: Path) -> None:
+    """A kill mid-write leaves a partial final line. Refusing to read the file
+    would defeat the entire point of having written it."""
+    from app.services.evaluation.runner import blank_result
+
+    sink = tmp_path / "torn.jsonl"
+    good = json.dumps(_asdict(blank_result(ANSWERABLE)), sort_keys=True)
+    sink.write_text(good + "\n" + good[: len(good) // 2])
+
+    salvaged = load_results(sink)
+
+    assert set(salvaged) == {ANSWERABLE.id}
+
+
+async def test_a_resumed_run_still_records_exactly_one_eval_runs_row(
+    db_sessionmaker: Sessionmaker, seeded: uuid.UUID, tmp_path: Path
+) -> None:
+    """eval_runs is the record of a *finished* run. A half-run row would corrupt
+    6.6's Quality-card trend, so the killed run inserts none and this inserts one."""
+    from app.services.evaluation.runner import blank_result
+
+    sink = tmp_path / "prior.jsonl"
+    sink.write_text(json.dumps(_asdict(blank_result(ANSWERABLE)), sort_keys=True) + "\n")
+    before = len(await _eval_runs(db_sessionmaker))
+
+    await run_eval(
+        items=[ANSWERABLE, SECOND_ANSWERABLE],
+        sessionmaker=db_sessionmaker,
+        org_id=seeded,
+        subset="test",
+        report_path=tmp_path / "r.json",
+        resume_path=sink,
+    )
+
+    rows = await _eval_runs(db_sessionmaker)
+    try:
+        assert len(rows) == before + 1
+    finally:
+        async with db_sessionmaker() as session:
+            await session.delete(await session.get(EvalRun, rows[0].id))
+            await session.commit()

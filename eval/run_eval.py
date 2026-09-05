@@ -7,6 +7,19 @@ Usage (from apps/api, so .env and the app package resolve):
 
 Requires a seeded demo org (`uv run python scripts/seed.py`) and the dev infra up.
 Writes a JSON report to eval/reports/ and one row into eval_runs.
+
+Each item is also appended to a .jsonl sink beside the report as it finishes, so a
+run that is killed part-way can be continued instead of restarted:
+
+    uv run python ../../eval/run_eval.py --subset fast --gate --no-db \
+        --out ../../eval/reports/verify.json --resume ../../eval/reports/verify.jsonl
+
+Pass the same base name and it appends in place, idempotently — the last line for an
+id wins. Items that errored or timed out are re-run; only clean ones are reused. The
+sink is deleted once a complete report is written.
+
+Do not pipe this through `tail`: it emits per-call progress lines and a pipe buffers
+them, so a healthy long run looks like a hang. Stream it, or `tee` it.
 """
 
 import argparse
@@ -63,6 +76,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "(default: 3 x LLM_TIMEOUT_SECONDS)",
     )
     parser.add_argument(
+        "--resume",
+        default=None,
+        help="a previous run's .jsonl sink; items already scored there are reused, "
+        "errored and timed-out ones are re-run",
+    )
+    parser.add_argument(
         "--no-db", action="store_true", help="skip the eval_runs row (report only)"
     )
     parser.add_argument(
@@ -106,6 +125,7 @@ async def main(argv: list[str] | None = None) -> int:
             persist=not args.no_db,
             report_path=Path(args.out) if args.out else None,
             item_timeout=args.item_timeout,
+            resume_path=Path(args.resume) if args.resume else None,
         )
     except EvalSetupError as exc:
         print(f"eval setup failed: {exc}", file=sys.stderr)
