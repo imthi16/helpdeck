@@ -253,7 +253,41 @@ async def test_agent_turn_traces_every_node_with_chunks_and_usage(
         usage = span.merged["usage_details"]
         assert usage["input"] > 0 and usage["output"] > 0
         assert span.as_type == "generation"
+        # Tokens alone do not produce a cost: Langfuse resolves a price by matching
+        # the model field, and a litellm routing prefix matches no definition. The
+        # routed identifier survives as metadata so nothing is lost.
+        model = span.merged["model"]
+        assert "/" not in model, f"{model} carries a routing prefix; cost will not resolve"
+        assert span.merged["metadata"]["model_id"].endswith(model)
 
     judge = langfuse.named("agent.faithfulness_judge")
     assert judge.as_type == "evaluator"
     assert "confidence" in judge.merged["output"]
+
+
+# --- the worker flushes on shutdown ------------------------------------------
+
+
+async def test_the_worker_flushes_buffered_scores_on_shutdown(
+    langfuse: RecordingLangfuse,
+) -> None:
+    """The nightly quality sweep emits scores through the buffering SDK. Without a
+    flush they vanish when the worker exits — and because score emission is
+    best-effort, a dropped score is indistinguishable from a night with nothing
+    scorable, so nothing would ever surface the loss."""
+    from app.workers.main import shutdown
+
+    await shutdown({})
+
+    assert langfuse.flushed == 1
+
+
+async def test_worker_shutdown_is_safe_with_tracing_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tracing is off by default, so shutdown must not care."""
+    from app.workers.main import shutdown
+
+    monkeypatch.setattr(tracing, "get_langfuse", lambda: None)
+
+    await shutdown({})
