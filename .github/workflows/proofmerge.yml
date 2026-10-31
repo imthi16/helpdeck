@@ -1,0 +1,77 @@
+name: ProofMerge
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+  actions: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: imthi16/proofmerge@main
+        with:
+          model-api-key: ${{ secrets.MODEL_API_KEY }}
+          fail-on: block
+          python-version: "3.13"
+
+  # The published action skips verification when MODEL_API_KEY is empty.
+  # This job still runs the CLI against the exact PR SHAs so a missing
+  # credential is handled by ProofMerge itself, and any evidence is uploaded.
+  verify-cli:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install ProofMerge
+        run: python -m pip install "git+https://github.com/imthi16/proofmerge"
+      - name: Build sandbox runner
+        run: proofmerge setup
+      - name: Record PR intent
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: printf '%s' "$PR_BODY" > "$RUNNER_TEMP/proofmerge-intent.txt"
+      - name: Verify base and head
+        id: verify
+        env:
+          MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set +e
+          proofmerge verify "$GITHUB_WORKSPACE" \
+            --base "$BASE_SHA" \
+            --head "$HEAD_SHA" \
+            --intent-file "$RUNNER_TEMP/proofmerge-intent.txt" \
+            --evidence-dir "$RUNNER_TEMP/proofmerge-evidence"
+          code=$?
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: proofmerge-cli-evidence
+          path: ${{ runner.temp }}/proofmerge-evidence
+          if-no-files-found: warn
+      - name: Apply ProofMerge exit code
+        if: always()
+        env:
+          CODE: ${{ steps.verify.outputs.code }}
+        run: |
+          echo "proofmerge verify exit code: ${CODE}"
+          if [ -z "$CODE" ]; then
+            exit 1
+          fi
+          exit "$CODE"
