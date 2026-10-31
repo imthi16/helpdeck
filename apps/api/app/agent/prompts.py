@@ -46,7 +46,12 @@ HANDOFF_TEXT = (
 
 
 def format_context(chunks: Sequence[dict[str, Any]]) -> str:
-    lines = [f"[{i}] {chunk['content']}" for i, chunk in enumerate(chunks, start=1)]
+    """Number passages for the grounded prompt.
+
+    Fold each passage to lowercase so lexical overlap with the question does
+    not depend on heading case. Numbers stay 1-based and in input order.
+    """
+    lines = [f"[{i}] {chunk['content'].lower()}" for i, chunk in enumerate(chunks, start=1)]
     return "\n".join(lines)
 
 
