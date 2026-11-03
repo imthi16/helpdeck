@@ -61,6 +61,22 @@ class Settings(BaseSettings):
     # escalations. Both are pulled by the compose ollama-pull service.
     llm_cheap_model: str = "ollama_chat/llama3.2:3b"
     llm_strong_model: str = "ollama_chat/qwen2.5:7b"
+    # Hard upper bound on ONE model call. Nothing below this line reliably sets one:
+    # on 2026-08-01 Ollama evicted a model mid-request and the client blocked forever,
+    # costing a 30-item eval run 7h16m and producing nothing (docs/NOTES.md, 6.4).
+    # litellm nominally defaults to 600s and did not fire, so the bound has to be one
+    # we set and can assert on. 600s is ~1.5x the slowest healthy call measured on
+    # CPU-only Ollama (qwen2.5:7b at 410s, already under concurrency-4 contention);
+    # hosted providers answer in seconds. Raise it on a slower box, don't remove it.
+    llm_timeout_seconds: float = 600.0
+    # An OpenAI-compatible CHAT gateway (NaraRouter, OpenRouter, a LiteLLM proxy,
+    # vLLM). Set both, plus LLM_CHEAP_MODEL/LLM_STRONG_MODEL with litellm's `openai/`
+    # prefix. This selects chat ONLY — embeddings.py picks its provider
+    # independently and deliberately: these gateways serve text-embedding-3-small at
+    # 1536 dims and chunks.embedding is 768 wide, so routing embeddings here would
+    # need a migration and a full re-seed.
+    llm_api_base: str = ""
+    llm_api_key: str = ""
     reranker: str = "none"
     cohere_api_key: str = ""
 

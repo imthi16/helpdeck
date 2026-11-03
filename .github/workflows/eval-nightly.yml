@@ -16,6 +16,10 @@ on:
 jobs:
   full-eval:
     runs-on: ubuntu-latest
+    # 107 items, ~535 generation calls, on hosted Gemini. More slack than the PR
+    # gate's 3.57x scaling implies: nobody is waiting on this, and a false red on a
+    # slow night costs more than the extra runner minutes.
+    timeout-minutes: 120
     services:
       postgres:
         image: pgvector/pgvector:pg17
@@ -87,6 +91,8 @@ jobs:
       # database means the row is only useful as the uploaded report until 6.4's
       # follow-up points this at a persistent instance).
       - name: Full golden set
+        # Step-level so the report + .jsonl sink upload still runs on a timeout.
+        timeout-minutes: 90
         working-directory: apps/api
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}

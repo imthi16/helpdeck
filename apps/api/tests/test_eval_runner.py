@@ -6,26 +6,42 @@ report, the eval_runs row, and that scoring the pipeline left no trace in tenant
 data.
 """
 
+import asyncio
 import json
+import threading
+import time
 import uuid
+from dataclasses import asdict as _asdict
 from pathlib import Path
 
 import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.agent.runner import build_dependencies
+from app.core.config import get_settings
+from app.core.db import unscoped_session_factory
 from app.models import Conversation, Escalation, EvalRun, EvalRunKind, Organization
 from app.services.embeddings import EmbeddingService
 from app.services.evaluation.dataset import GoldenItem
 from app.services.evaluation.runner import (
+    SEQUENTIAL_EMBED_CALLS,
+    SEQUENTIAL_MODEL_CALLS,
     EvalItemResult,
     EvalSetupError,
     aggregate,
+    default_item_timeout,
+    eval_fingerprint,
     format_summary,
+    load_results,
     resolve_org,
     run_eval,
+    run_until_done,
+    sink_path_for,
+    stub_providers,
 )
 from app.services.ingestion.seed import seed_corpus
+from app.services.llm import LLMGateway
 from app.services.storage import LocalFileStorage
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -375,3 +391,486 @@ def test_summary_flags_a_hosted_run_that_fell_back_to_stub_embeddings() -> None:
 
     assert "HashingEmbeddingProvider" in text
     assert "ANTHROPIC_API_KEY alone does not supply embeddings" in text
+
+
+# --- resilience to a wedged item ---------------------------------------------
+#
+# On 2026-08-01 a 30-item run hung after 20 items and was killed after 7h16m,
+# losing every scored item: Ollama evicted a model mid-request, nothing bounded the
+# call, and gather() stranded the 20 completed results (docs/NOTES.md, Phase 6.4).
+# These reproduce that shape in under a second.
+
+
+class _HangingGateway:
+    """A gateway that wedges on one question and behaves normally on the rest.
+
+    Wraps a real gateway so non-wedged items still score for real — the point of
+    the watchdog is that the rest of the run completes, which a fully-fake gateway
+    could not demonstrate.
+    """
+
+    def __init__(self, inner, hang_on: str) -> None:
+        self._inner = inner
+        self._hang_on = hang_on
+
+    def _wedged(self, messages) -> bool:
+        return any(self._hang_on in msg.content for msg in messages)
+
+    @property
+    def provider_name(self) -> str:
+        return self._inner.provider_name
+
+    def model_for(self, route):
+        return self._inner.model_for(route)
+
+    async def complete(self, messages, **kwargs):
+        if self._wedged(messages):
+            await asyncio.Event().wait()  # never resolves, exactly like the incident
+        return await self._inner.complete(messages, **kwargs)
+
+    def stream(self, messages, **kwargs):
+        if self._wedged(messages):
+
+            async def hang():
+                await asyncio.Event().wait()
+                yield ""  # pragma: no cover
+
+            return hang()
+        return self._inner.stream(messages, **kwargs)
+
+
+async def test_a_wedged_item_times_out_and_the_rest_of_the_run_completes(
+    db_sessionmaker: Sessionmaker, seeded: uuid.UUID, tmp_path: Path
+) -> None:
+    """The incident, as a one-second test."""
+    deps = build_dependencies(
+        session_factory=unscoped_session_factory(db_sessionmaker),
+        gateway=_HangingGateway(LLMGateway(), hang_on="CEO's shoe size"),
+    )
+
+    report = await run_eval(
+        items=[ANSWERABLE, UNANSWERABLE, SECOND_ANSWERABLE],
+        sessionmaker=db_sessionmaker,
+        org_id=seeded,
+        deps=deps,
+        concurrency=3,
+        item_timeout=0.3,
+        persist=False,
+        report_path=tmp_path / "wedged.json",
+    )
+
+    wedged = next(i for i in report.items if i.item_id == UNANSWERABLE.id)
+    assert wedged.error is not None and wedged.error.startswith("TimeoutError")
+    assert report.counts["errors"] == 1
+    # The whole point: the other two items still produced scores.
+    assert all(i.error is None for i in report.items if i.item_id != UNANSWERABLE.id)
+    assert report.metrics["faithfulness"] is not None
+    assert (tmp_path / "wedged.json").exists()
+
+
+async def test_the_watchdog_does_not_charge_an_item_for_waiting_on_a_slot(
+    db_sessionmaker: Sessionmaker, seeded: uuid.UUID, tmp_path: Path
+) -> None:
+    """Queueing for a concurrency slot is legitimate time. If the timeout were
+    placed outside the semaphore, items 2..N would inherit their predecessors'
+    latency and fail en masse — at concurrency 4 that is items 5..30."""
+    report = await run_eval(
+        items=[ANSWERABLE, UNANSWERABLE, SECOND_ANSWERABLE],
+        sessionmaker=db_sessionmaker,
+        org_id=seeded,
+        concurrency=1,
+        item_timeout=20.0,
+        persist=False,
+        report_path=tmp_path / "queued.json",
+    )
+
+    assert report.counts["errors"] == 0
+
+
+async def test_an_exception_escaping_score_item_is_recorded_not_raised(
+    db_sessionmaker: Sessionmaker, seeded: uuid.UUID, tmp_path: Path, monkeypatch
+) -> None:
+    """gather(return_exceptions=True): one unforeseen escape must not strand every
+    sibling's already-computed result, which is what the 2026-08-01 wedge did."""
+    from app.services.evaluation import runner as runner_module
+
+    real = runner_module.score_item
+
+    async def explode_on_one(deps, *, org_id, item, embedding_service, judge_route):
+        if item.id == SECOND_ANSWERABLE.id:
+            raise MemoryError("simulated")
+        return await real(
+            deps,
+            org_id=org_id,
+            item=item,
+            embedding_service=embedding_service,
+            judge_route=judge_route,
+        )
+
+    monkeypatch.setattr(runner_module, "score_item", explode_on_one)
+
+    report = await run_eval(
+        items=[ANSWERABLE, SECOND_ANSWERABLE],
+        sessionmaker=db_sessionmaker,
+        org_id=seeded,
+        persist=False,
+        report_path=tmp_path / "escaped.json",
+    )
+
+    assert len(report.items) == 2, "every requested item must produce a row"
+    exploded = next(i for i in report.items if i.item_id == SECOND_ANSWERABLE.id)
+    assert exploded.error == "MemoryError: simulated"
+    assert report.counts["errors"] == 1
+
+
+async def test_the_timeout_budgets_are_recorded_in_the_environment(
+    db_sessionmaker: Sessionmaker, seeded: uuid.UUID, tmp_path: Path
+) -> None:
+    """Two runs are only comparable when the bounds match — a tight bound converts
+    slow-but-healthy items into errors that aggregate then excludes."""
+    report = await run_eval(
+        items=[ANSWERABLE],
+        sessionmaker=db_sessionmaker,
+        org_id=seeded,
+        item_timeout=123.0,
+        persist=False,
+        report_path=tmp_path / "env.json",
+    )
+
+    assert report.environment["item_timeout_seconds"] == 123.0
+    assert report.environment["llm_timeout_seconds"] == get_settings().llm_timeout_seconds
+    # The budgets are floats, so the gate's string-valued stub scan cannot mistake
+    # one for a provider name — it still reports exactly the two offline stubs.
+    assert stub_providers(report.environment) == [
+        "embedding_provider=HashingEmbeddingProvider",
+        "llm_provider=OfflineGroundedProvider",
+    ]
+
+
+def _stamp_sink(
+    path: Path,
+    rows: list[dict],
+    *,
+    org: uuid.UUID,
+    items: list[GoldenItem],
+    sessionmaker: Sessionmaker,
+    subset: str = "full",
+) -> None:
+    """A resume sink headed by the fingerprint ``run_eval`` will recompute."""
+    from app.services.evaluation.runner import _FINGERPRINT_KEY
+
+    embedding_service = EmbeddingService()
+    deps = build_dependencies(
+        session_factory=unscoped_session_factory(sessionmaker),
+        embedding_service=embedding_service,
+    )
+    fingerprint = eval_fingerprint(
+        org_id=org,
+        dataset="golden.jsonl",
+        subset=subset,
+        items=items,
+        deps=deps,
+        embedding_service=embedding_service,
+        item_timeout=default_item_timeout(),
+    )
+    lines = [json.dumps({_FINGERPRINT_KEY: fingerprint}, sort_keys=True)]
+    lines.extend(json.dumps(row, sort_keys=True) for row in rows)
+    path.write_text("\n".join(lines) + "\n")
+
+
+# --- incremental sink and resume ---------------------------------------------
+#
+# The other half of the 2026-08-01 loss: the report was a single write after the
+# last item, so killing the run at 20/30 salvaged nothing. Each item is now
+# appended as it lands, and --resume turns a kill into a continuation.
+
+
+async def test_each_item_is_appended_to_the_sink_as_it_finishes(
+    db_sessionmaker: Sessionmaker, seeded: uuid.UUID, tmp_path: Path
+) -> None:
+    out = tmp_path / "r.json"
+
+    await run_eval(
+        items=[ANSWERABLE, UNANSWERABLE],
+        sessionmaker=db_sessionmaker,
+        org_id=seeded,
+        persist=False,
+        report_path=out,
+    )
+
+    # A complete run cleans the sink up, so read it back mid-flight instead by
+    # checking the loader against a sink written by a run that was NOT completed.
+    assert not sink_path_for(out).exists(), "a finished report supersedes its sink"
+
+
+async def test_the_sink_survives_a_run_that_never_writes_a_report(
+    db_sessionmaker: Sessionmaker, seeded: uuid.UUID, tmp_path: Path, monkeypatch
+) -> None:
+    """The salvage path: the process dies before the report is written, and the
+    scored items are still on disk. This is what the 7h16m kill lost."""
+    from app.services.evaluation import runner as runner_module
+
+    def explode(report, path):
+        raise KeyboardInterrupt("simulated kill after the last item")
+
+    monkeypatch.setattr(runner_module, "write_report", explode)
+    out = tmp_path / "killed.json"
+
+    with pytest.raises(KeyboardInterrupt):
+        await run_eval(
+            items=[ANSWERABLE, SECOND_ANSWERABLE],
+            sessionmaker=db_sessionmaker,
+            org_id=seeded,
+            persist=False,
+            report_path=out,
+        )
+
+    salvaged = load_results(sink_path_for(out))
+    assert set(salvaged) == {ANSWERABLE.id, SECOND_ANSWERABLE.id}
+    assert salvaged[ANSWERABLE.id].faithfulness is not None
+
+
+async def test_resume_skips_items_already_scored(
+    db_sessionmaker: Sessionmaker, seeded: uuid.UUID, tmp_path: Path, monkeypatch
+) -> None:
+    from app.services.evaluation import runner as runner_module
+
+    sink = tmp_path / "prior.jsonl"
+    prior = await run_eval(
+        items=[ANSWERABLE],
+        sessionmaker=db_sessionmaker,
+        org_id=seeded,
+        persist=False,
+        report_path=tmp_path / "prior.json",
+    )
+    # Rebuild the sink the completed run cleaned up, stamped as this run.
+    _stamp_sink(
+        sink,
+        [_asdict(prior.items[0])],
+        org=seeded,
+        items=[ANSWERABLE, SECOND_ANSWERABLE],
+        sessionmaker=db_sessionmaker,
+    )
+
+    scored: list[str] = []
+    real = runner_module.score_item
+
+    async def counting(deps, *, org_id, item, embedding_service, judge_route):
+        scored.append(item.id)
+        return await real(
+            deps,
+            org_id=org_id,
+            item=item,
+            embedding_service=embedding_service,
+            judge_route=judge_route,
+        )
+
+    monkeypatch.setattr(runner_module, "score_item", counting)
+
+    report = await run_eval(
+        items=[ANSWERABLE, SECOND_ANSWERABLE],
+        sessionmaker=db_sessionmaker,
+        org_id=seeded,
+        persist=False,
+        report_path=tmp_path / "resumed.json",
+        resume_path=sink,
+    )
+
+    assert scored == [SECOND_ANSWERABLE.id], "the already-scored item must not re-run"
+    assert report.resumed_item_count == 1
+    assert report.resumed_from == str(sink)
+    assert [i.item_id for i in report.items] == [ANSWERABLE.id, SECOND_ANSWERABLE.id]
+    carried = next(i for i in report.items if i.item_id == ANSWERABLE.id)
+    assert carried.answer == prior.items[0].answer, "the prior answer survives verbatim"
+
+
+async def test_resume_rescores_an_item_that_errored(
+    db_sessionmaker: Sessionmaker, seeded: uuid.UUID, tmp_path: Path, monkeypatch
+) -> None:
+    """A timed-out item must be retried, not inherited — otherwise the CLI keeps
+    exiting 1 for a failure the resume never actually re-attempted."""
+    from app.services.evaluation import runner as runner_module
+
+    sink = tmp_path / "prior.jsonl"
+    clean = _asdict(runner_module.blank_result(ANSWERABLE))
+    errored = _asdict(
+        runner_module.failed_result(SECOND_ANSWERABLE, "TimeoutError: item exceeded 30s")
+    )
+    _stamp_sink(
+        sink,
+        [clean, errored],
+        org=seeded,
+        items=[ANSWERABLE, SECOND_ANSWERABLE],
+        sessionmaker=db_sessionmaker,
+    )
+
+    scored: list[str] = []
+    real = runner_module.score_item
+
+    async def counting(deps, *, org_id, item, embedding_service, judge_route):
+        scored.append(item.id)
+        return await real(
+            deps,
+            org_id=org_id,
+            item=item,
+            embedding_service=embedding_service,
+            judge_route=judge_route,
+        )
+
+    monkeypatch.setattr(runner_module, "score_item", counting)
+
+    report = await run_eval(
+        items=[ANSWERABLE, SECOND_ANSWERABLE],
+        sessionmaker=db_sessionmaker,
+        org_id=seeded,
+        persist=False,
+        report_path=tmp_path / "resumed.json",
+        resume_path=sink,
+    )
+
+    assert scored == [SECOND_ANSWERABLE.id]
+    assert report.counts["errors"] == 0, "the retried item now has a real score"
+
+
+def test_resume_tolerates_a_truncated_last_line(tmp_path: Path) -> None:
+    """A kill mid-write leaves a partial final line. Refusing to read the file
+    would defeat the entire point of having written it."""
+    from app.services.evaluation.runner import blank_result
+
+    sink = tmp_path / "torn.jsonl"
+    good = json.dumps(_asdict(blank_result(ANSWERABLE)), sort_keys=True)
+    sink.write_text(good + "\n" + good[: len(good) // 2])
+
+    salvaged = load_results(sink)
+
+    assert set(salvaged) == {ANSWERABLE.id}
+
+
+async def test_a_resumed_run_still_records_exactly_one_eval_runs_row(
+    db_sessionmaker: Sessionmaker, seeded: uuid.UUID, tmp_path: Path
+) -> None:
+    """eval_runs is the record of a *finished* run. A half-run row would corrupt
+    6.6's Quality-card trend, so the killed run inserts none and this inserts one."""
+    from app.services.evaluation.runner import blank_result
+
+    sink = tmp_path / "prior.jsonl"
+    _stamp_sink(
+        sink,
+        [_asdict(blank_result(ANSWERABLE))],
+        org=seeded,
+        items=[ANSWERABLE, SECOND_ANSWERABLE],
+        sessionmaker=db_sessionmaker,
+        subset="test",
+    )
+    before = len(await _eval_runs(db_sessionmaker))
+
+    await run_eval(
+        items=[ANSWERABLE, SECOND_ANSWERABLE],
+        sessionmaker=db_sessionmaker,
+        org_id=seeded,
+        subset="test",
+        report_path=tmp_path / "r.json",
+        resume_path=sink,
+    )
+
+    rows = await _eval_runs(db_sessionmaker)
+    try:
+        assert len(rows) == before + 1
+    finally:
+        async with db_sessionmaker() as session:
+            await session.delete(await session.get(EvalRun, rows[0].id))
+            await session.commit()
+
+
+async def test_the_environment_records_the_chat_gateway_endpoint(
+    db_sessionmaker: Sessionmaker, seeded: uuid.UUID, tmp_path: Path
+) -> None:
+    """provider_name is "LiteLLMProvider" for Ollama, Gemini and any gateway alike,
+    and an alias is plan-dependent — an unlabelled run is an unreadable number."""
+    report = await run_eval(
+        items=[ANSWERABLE],
+        sessionmaker=db_sessionmaker,
+        org_id=seeded,
+        persist=False,
+        report_path=tmp_path / "r.json",
+    )
+
+    # No gateway configured under the test env, so it records None rather than "".
+    assert report.environment["llm_api_base"] is None
+
+
+def test_default_item_timeout_covers_every_sequential_call() -> None:
+    from app.services.embeddings import EMBEDDING_TIMEOUT_SECONDS, MAX_RETRIES
+
+    expected = (
+        SEQUENTIAL_MODEL_CALLS * get_settings().llm_timeout_seconds
+        + SEQUENTIAL_EMBED_CALLS * EMBEDDING_TIMEOUT_SECONDS * (MAX_RETRIES + 1)
+    )
+    assert default_item_timeout() == expected
+    assert expected > 3 * get_settings().llm_timeout_seconds
+
+
+def test_run_until_done_does_not_join_a_wedged_executor_thread() -> None:
+    """Cancelling the await leaves the worker blocked. Shutdown must not join it."""
+    release = threading.Event()
+
+    def block() -> None:
+        release.wait(5)
+
+    async def main() -> str:
+        loop = asyncio.get_running_loop()
+        try:
+            async with asyncio.timeout(0.2):
+                await loop.run_in_executor(None, block)
+        except TimeoutError:
+            return "timed out"
+        return "finished"
+
+    started = time.perf_counter()
+    try:
+        assert run_until_done(main()) == "timed out"
+        assert time.perf_counter() - started < 1
+    finally:
+        release.set()
+
+
+async def test_a_failed_item_keeps_the_sink(
+    db_sessionmaker: Sessionmaker, seeded: uuid.UUID, tmp_path: Path, monkeypatch
+) -> None:
+    from app.services.evaluation import runner as runner_module
+
+    async def boom(deps, *, org_id, item, embedding_service, judge_route):
+        raise TimeoutError("wedged")
+
+    monkeypatch.setattr(runner_module, "score_item", boom)
+    out = tmp_path / "failed.json"
+
+    report = await run_eval(
+        items=[ANSWERABLE],
+        sessionmaker=db_sessionmaker,
+        org_id=seeded,
+        persist=False,
+        report_path=out,
+    )
+
+    assert report.counts["errors"] == 1
+    salvaged = load_results(sink_path_for(out))
+    assert salvaged == {}
+    assert sink_path_for(out).exists()
+
+
+async def test_resume_rejects_a_sink_from_another_run(
+    db_sessionmaker: Sessionmaker, seeded: uuid.UUID, tmp_path: Path
+) -> None:
+    sink = tmp_path / "foreign.jsonl"
+    sink.write_text(json.dumps({"_eval_fingerprint": {"org_id": "someone-else"}}) + "\n")
+
+    with pytest.raises(EvalSetupError, match="does not match"):
+        await run_eval(
+            items=[ANSWERABLE],
+            sessionmaker=db_sessionmaker,
+            org_id=seeded,
+            persist=False,
+            report_path=tmp_path / "r.json",
+            resume_path=sink,
+        )

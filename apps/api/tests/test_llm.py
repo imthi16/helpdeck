@@ -239,3 +239,163 @@ def test_upstream_capacity_errors_are_retried() -> None:
         "This model is currently experiencing high demand",
     ):
         assert LiteLLMProvider._retry_delay(Exception(message), attempt=0) is not None
+
+
+# --- call bounds -------------------------------------------------------------
+#
+# Nothing in the path reliably bounded a model call before this: litellm nominally
+# defaults to 600s and, on 2026-08-01, did not fire — Ollama evicted a model
+# mid-request and the client blocked forever, costing a 30-item eval run 7h16m and
+# producing nothing (docs/NOTES.md, Phase 6.4). These pin the bounds we set ourselves.
+
+
+class _RecordingAcompletion:
+    """Stands in for ``litellm.acompletion``, capturing the kwargs it was given."""
+
+    def __init__(self, result: object) -> None:
+        self.kwargs: dict = {}
+        self._result = result
+
+    async def __call__(self, **kwargs):
+        self.kwargs = kwargs
+        return self._result
+
+
+def _install_litellm(monkeypatch, acompletion) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    monkeypatch.setitem(sys.modules, "litellm", SimpleNamespace(acompletion=acompletion))
+
+
+def _completion(text: str = "ok"):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content=text))],
+        usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1),
+    )
+
+
+async def test_every_completion_carries_a_request_timeout(monkeypatch) -> None:
+    fake = _RecordingAcompletion(_completion())
+    _install_litellm(monkeypatch, fake)
+
+    await LiteLLMProvider(api_key="k", timeout=42.0).complete("m", [LLMMessage("user", "hi")])
+
+    assert fake.kwargs["timeout"] == 42.0
+
+
+async def test_an_explicit_timeout_from_a_call_site_wins(monkeypatch) -> None:
+    """`timeout` is placed before **kwargs in _kwargs precisely so this holds."""
+    fake = _RecordingAcompletion(_completion())
+    _install_litellm(monkeypatch, fake)
+
+    await LiteLLMProvider(api_key="k", timeout=42.0).complete(
+        "m", [LLMMessage("user", "hi")], timeout=5.0
+    )
+
+    assert fake.kwargs["timeout"] == 5.0
+
+
+async def test_a_stalled_stream_raises_instead_of_hanging_forever(monkeypatch) -> None:
+    """The incident, in miniature: the server accepts the request, sends one chunk,
+    then never sends another. The request timeout cannot see this — the HTTP call
+    already succeeded — so the gap between chunks needs its own deadline."""
+    import asyncio
+    from types import SimpleNamespace
+
+    def chunk(text: str):
+        return SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content=text))])
+
+    class StallingStream:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if not getattr(self, "_sent", False):
+                self._sent = True
+                return chunk("first ")
+            await asyncio.Event().wait()  # never resolves
+
+    async def acompletion(**kwargs):
+        return StallingStream()
+
+    _install_litellm(monkeypatch, acompletion)
+
+    pieces: list[str] = []
+    with pytest.raises(TimeoutError):
+        async for piece in LiteLLMProvider(api_key="k", timeout=0.05).stream(
+            "m", [LLMMessage("user", "hi")]
+        ):
+            pieces.append(piece)
+
+    assert pieces == ["first "], "the gap is bounded, not the stream — chunk 1 must arrive"
+
+
+def test_a_timeout_is_not_retried_because_it_is_the_upper_bound() -> None:
+    """LLM_TIMEOUT_SECONDS is a ceiling. Retrying it 3x makes the ceiling 4x higher,
+    which is the wedge the bound exists to stop. A timed-out eval item is re-run by
+    `run_eval.py --resume`, which re-pays one item rather than one call."""
+    for message in (
+        "litellm.Timeout: Connection timed out after 600.0s",
+        "litellm.APITimeoutError: Request timed out.",
+    ):
+        assert LiteLLMProvider._retry_delay(Exception(message), attempt=0) is None
+
+
+# --- OpenAI-compatible chat gateway ------------------------------------------
+
+
+def _selected(monkeypatch, **env):
+    """_default_provider() under a clean, explicit environment."""
+    from app.core.config import get_settings
+    from app.services.llm import _default_provider
+
+    for name in (
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "GEMINI_API_KEY",
+        "LLM_API_KEY",
+        "LLM_API_BASE",
+        "OLLAMA_BASE_URL",
+    ):
+        monkeypatch.setenv(name, env.get(name, ""))
+    get_settings.cache_clear()
+    try:
+        return _default_provider()
+    finally:
+        get_settings.cache_clear()
+
+
+def test_an_llm_api_base_selects_the_gateway_with_key_and_base(monkeypatch) -> None:
+    provider = _selected(
+        monkeypatch, LLM_API_BASE="https://gateway.example/v1", LLM_API_KEY="sk-test"
+    )
+
+    assert isinstance(provider, LiteLLMProvider)
+    payload = provider._kwargs("openai/some-alias", [LLMMessage("user", "hi")])
+    assert payload["api_base"] == "https://gateway.example/v1"
+    assert payload["api_key"] == "sk-test"
+
+
+def test_an_llm_api_base_outranks_a_hosted_provider_key(monkeypatch) -> None:
+    """The rule that makes the hybrid decidable: chat on the configured gateway,
+    embeddings independently on Gemini. Both are hosted keys, so without an explicit
+    precedence the tie-break would pick one and the pairing would work only by luck."""
+    provider = _selected(
+        monkeypatch,
+        GEMINI_API_KEY="gemini-key",
+        LLM_API_BASE="https://gateway.example/v1",
+        LLM_API_KEY="sk-gateway",
+    )
+
+    payload = provider._kwargs("openai/some-alias", [])
+    assert payload["api_base"] == "https://gateway.example/v1"
+    assert payload["api_key"] == "sk-gateway", "the Gemini key must not reach the gateway"
+
+
+def test_a_gateway_key_without_a_base_falls_through(monkeypatch) -> None:
+    """A key with no endpoint would otherwise be handed to whichever provider the
+    model prefix names — a gateway key sent to api.openai.com."""
+    assert isinstance(_selected(monkeypatch, LLM_API_KEY="sk-orphan"), OfflineGroundedProvider)

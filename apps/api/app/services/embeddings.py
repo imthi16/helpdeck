@@ -24,6 +24,13 @@ BASE_RETRY_DELAY_SECONDS = 0.5
 # Output width of the default OSS embedding model (nomic-embed-text via Ollama);
 # must match the chunks.embedding vector column (see the 768-dim migration).
 EMBEDDING_DIMS = 768
+#: Upper bound on one embedding request. Nothing else in this path set one, and a
+#: provider that accepts a request and never answers blocks the batch forever — the
+#: failure that cost a 30-item eval run 7h16m (docs/NOTES.md, Phase 6.4).
+#: Deliberately NOT LLM_TIMEOUT_SECONDS: _embed_batch_with_retry already retries any
+#: exception 3x, so 4 x 600s would be worse than the wedge it replaces. At 120s a
+#: wedged batch caps at ~8 minutes, against ~1s for a healthy 100-text batch on CPU.
+EMBEDDING_TIMEOUT_SECONDS = 120.0
 
 
 class EmbeddingError(Exception):
@@ -38,7 +45,12 @@ class OpenAIEmbeddingProvider:
     def __init__(self, api_key: str) -> None:
         from openai import AsyncOpenAI
 
-        self._client = AsyncOpenAI(api_key=api_key)
+        # Explicit rather than the SDK's implicit 600s, so all three providers agree.
+        # max_retries=0: the SDK's own retries (default 2) stack on
+        # EmbeddingService._embed_batch_with_retry and blow the item ceiling.
+        self._client = AsyncOpenAI(
+            api_key=api_key, timeout=EMBEDDING_TIMEOUT_SECONDS, max_retries=0
+        )
 
     async def embed(self, texts: list[str], model: str) -> list[list[float]]:
         response = await self._client.embeddings.create(model=model, input=texts)
@@ -63,7 +75,11 @@ class GeminiEmbeddingProvider:
         import litellm
 
         response = await litellm.aembedding(
-            model=model, input=texts, api_key=self._api_key, dimensions=self._dims
+            model=model,
+            input=texts,
+            api_key=self._api_key,
+            dimensions=self._dims,
+            timeout=EMBEDDING_TIMEOUT_SECONDS,
         )
         data = sorted(response.data, key=OllamaEmbeddingProvider._index)
         vectors = [OllamaEmbeddingProvider._vector(item) for item in data]
@@ -97,7 +113,9 @@ class OllamaEmbeddingProvider:
     async def embed(self, texts: list[str], model: str) -> list[list[float]]:
         import litellm
 
-        response = await litellm.aembedding(model=model, input=texts, api_base=self._api_base)
+        response = await litellm.aembedding(
+            model=model, input=texts, api_base=self._api_base, timeout=EMBEDDING_TIMEOUT_SECONDS
+        )
         return [self._vector(item) for item in sorted(response.data, key=self._index)]
 
 

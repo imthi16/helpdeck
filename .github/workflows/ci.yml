@@ -113,6 +113,11 @@ jobs:
   eval-gate:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    # ~150 Gemini calls at seconds each; setup (uv sync + migrate + seed) dominates.
+    # The bound exists so a wedged call fails the PR in a reviewable window rather
+    # than burning GitHub's 360-minute default in silence, which is exactly how the
+    # 7h16m local wedge read (docs/NOTES.md, Phase 6.4). Tighten once measured.
+    timeout-minutes: 45
     services:
       postgres:
         image: pgvector/pgvector:pg17
@@ -209,6 +214,10 @@ jobs:
       # 429s. Embedding quota is separate and generous. See docs/NOTES.md, 6.4.
       - name: Eval gate — 30-item fast subset
         if: steps.changed.outputs.relevant == 'true'
+        # Step-level, so the artifact upload below still runs when this trips: on a
+        # job timeout the runner cancels the job and `if: always()` steps are not a
+        # thing to bet a forensic artifact on. The .jsonl sink is the artifact.
+        timeout-minutes: 30
         working-directory: apps/api
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}

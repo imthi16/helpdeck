@@ -643,6 +643,53 @@ A timeout on the gateway call plus a per-item watchdog is the fix; both are chan
 shipped code, so they are proposed rather than applied — the task in flight is 6.4's
 Verify, not hardening the runner.
 
+### The hardening, as applied
+
+**2026-09-05: applied.** Three independent layers, each of which alone would have
+salvaged the run — the redundancy is deliberate, since layer 1 is exactly the layer that
+already existed nominally and failed.
+
+1. **`LLM_TIMEOUT_SECONDS` (600s) on every chat call**, plus a per-chunk deadline in
+   `LiteLLMProvider.stream`. litellm 1.91.1 *does* nominally bound this —
+   `COMPLETION_HTTP_FALLBACK_SECONDS = 600.0`, reaching aiohttp as a per-read
+   `sock_read` — and it did not fire on 2026-08-01. Which link broke is unknown without
+   reproducing, so the durable conclusion is that the harness must not depend on the
+   transport's implicit default. The stream deadline is separate because a request
+   timeout bounds the HTTP call, not the gap between two chunks of a stream the server
+   already accepted, which is precisely what a mid-generation eviction produces.
+   `EMBEDDING_TIMEOUT_SECONDS` is 120s, not 600s, because `_embed_batch_with_retry`
+   already retries 3× — 4 × 600s would be worse than the wedge it replaces.
+2. **A per-item watchdog** at `3 × LLM_TIMEOUT_SECONDS`, inside the semaphore (queueing
+   for a slot is legitimate time; charging it would fail items 5..N en masse at
+   concurrency 4) and outside `score_item` (`asyncio.timeout` cancels with
+   `CancelledError`, a `BaseException` its two `except Exception` guards deliberately
+   cannot absorb). Plus `gather(return_exceptions=True)`, so one unforeseen escape
+   cannot strand every sibling's computed result the way this incident did.
+3. **A JSONL sink beside the report**, appended and flushed per item, with `--resume`.
+
+**Timeouts are retried by `--resume`, not by the provider.** `_retry_delay` deliberately
+does not classify `TimeoutError` as transient: with `MAX_RATE_LIMIT_RETRIES = 3` that
+would make the worst case 40 minutes per call, reintroducing the wedge in slow motion and
+pushing a healthy item past the watchdog. Resume re-pays one *item*; a provider retry
+re-pays one *call* inside an item already over budget. A test pins the decision.
+
+Two honest caveats, neither worked around:
+
+- **`litellm.acompletion` dispatches via `loop.run_in_executor`.** A timeout cancels our
+  await; it does not kill a thread already blocked in the executor, whose socket lingers
+  until the process exits. Acceptable for a short-lived batch process — but "timed out"
+  must not be read as "resources reclaimed".
+- **If anything inside `run_turn` swallowed `CancelledError`**, `asyncio.timeout` would
+  not convert it and would leave a cancellation imbalance. LangGraph and httpx do not.
+
+**Known flaky teardown, pre-existing, surfaced more often by the new tests.** The full
+suite intermittently reports one ERROR in `tests/test_rbac.py` — a *different*
+parametrised case each run, absent entirely on some runs of the identical tree, and never
+when that file runs alone (70 passed). The mechanism is named by a warning present since
+before this work: `RuntimeWarning: coroutine 'Connection._cancel' was never awaited` in
+teardown. The sink tests add DB-touching cases and so raise the load that exposes it.
+Exit code stays 0. Worth fixing on its own, not here.
+
 **This makes CPU-only local runs a poor host for the verify.** An 85-minute uncontended
 run has a wide window to hit this, and it has now cost two sessions. The RTX 4090 box at
 `172.18.15.184` (32 cores, 62GB, Ollama native, `llama3.2:3b` + `qwen2.5:7b` +
@@ -651,6 +698,67 @@ order of magnitude. What is missing there is the repo and a corpus: transfer is 
 pending permission, and the corpus should be moved by `pg_dump` of the local `helpdeck`
 DB rather than re-seeded, so the run hits the **same 8-document corpus** the baseline
 used and the two numbers stay comparable.
+
+### 2026-09-05: a free Gemini key still cannot produce the baseline
+
+Measured, so nobody re-tries it. A key entitling `gemini-3.1-flash-lite`,
+`gemini-3.5-flash` and `gemini-embedding-001` @ 768 — the exact pair both workflows
+pin — ran the 30-item fast subset and **could not produce a baseline**:
+
+    items=30 answered=4 errors=26   (25 x 429 quota, 1 x watchdog)
+    faithfulness 1.000 over 4 items, refusal_accuracy "not measured"
+    gate passed=False, exit 1, 246s
+
+The provider names the cause exactly, which settles the earlier estimate:
+
+    Quota exceeded for metric: generate_content_free_tier_requests
+    limit: 20, model: gemini-3.5-flash
+    quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier
+
+A 2-item smoke was clean (43s, errors=0, faithfulness 1.0), so the pipeline and the
+Gemini wiring are fine — this is purely the 20/day cap against a subset needing ~60
+strong-route calls. **6.4's verify needs paid quota or a different gateway.**
+
+**The run is, incidentally, the best evidence the hardening works.** The same quota
+storm before this work would have looked like the 2026-08-01 wedge; instead:
+
+- the watchdog fired on `g019` after 180s stuck in retry backoff, rather than hanging;
+- the run *finished*, in 246s, with a written report naming all 26 failures;
+- `refusal_accuracy` came back **"not measured"** rather than 0.000 — all five
+  unanswerable items errored, so the population was empty, and `mean_or_none` refused
+  to report an unmeasured metric as a failing score;
+- the gate refused to pass on a mostly-errored run, and the CLI exited 1.
+
+A 1.000 faithfulness over 4 surviving items is exactly the kind of number that reads as
+healthy and is not; the gate not blessing it is the whole design working.
+
+### NaraRouter as the hosted chat option
+
+`LLM_API_BASE` + `LLM_API_KEY` route chat through any OpenAI-compatible gateway, which
+makes the verify runnable on hosted models instead of an 85-minute CPU run. `openai/`
+prefix on both models, `api_base` including `/v1` — not an `anthropic/` prefix against a
+gateway's `/v1/messages`, since litellm appends its own path and yields `/v1/v1/messages`.
+
+The setting is generic rather than a `NARAROUTER_API_KEY` for one reason above the
+others: **`OPENAI_API_KEY` was not a usable home for a gateway key.**
+`embeddings.py:_default_provider()` checks it *before* `gemini_api_key` and
+`OpenAIEmbeddingProvider` threads no `base_url`, so a gateway key there would be sent to
+`api.openai.com` and 401 every ingest and query embed. Reusing the existing variable
+would have cost more code than adding one.
+
+`LLM_API_BASE` is the **first** branch of `_default_provider`, which makes the
+chat-here/embeddings-elsewhere hybrid decidable rather than accidental — a gateway key
+and `GEMINI_API_KEY` are both hosted keys, so the old tie-break would have picked one and
+the pairing would have worked only by luck, exactly as the Gemini-embeddings /
+Ollama-generation pairing did. It is also why `conftest.py` and
+`apps/web/playwright.config.ts` now blank it: a stray value in `apps/api/.env` captures
+the chat path for the whole suite *ahead of every key blanked beside it*.
+
+**The Ollama baseline does not transfer to a gateway run.** Embeddings stay on Gemini, so
+retrieval is unchanged, but the answer model *and* the judge change — a weakened run
+scored against the `42441fa` Ollama baseline could not separate a prompt regression from
+a model swap. 6.4's Verify therefore needs **two** hosted runs, a fresh baseline and the
+weakened one.
 
 ## Gemini as a hosted provider
 

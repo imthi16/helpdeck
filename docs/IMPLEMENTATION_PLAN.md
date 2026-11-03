@@ -24,11 +24,20 @@
   run 0.36, so gating on it would fail every PR until retrieval and the serving gate
   improve.
 - **2026-08-01: the weakened half was attempted again and wedged at 20/30 items**, then
-  was killed after 7h16m of no output — the runner has no read timeout on the Ollama
-  call, and writes its report only at the end, so nothing was salvaged. Still no
-  weakened-prompt result. Diagnosis and the proposed fix: `docs/NOTES.md` (Phase 6.4,
-  "The weakened run wedges"). Next attempt should run on the RTX 4090 box rather than
-  local CPU; that needs the repo transferred and the corpus moved by `pg_dump`.
+  was killed after 7h16m of no output — the runner had no read timeout on the Ollama
+  call, and wrote its report only at the end, so nothing was salvaged. Diagnosis:
+  `docs/NOTES.md` (Phase 6.4, "The weakened run wedges").
+- **2026-09-05: the harness is hardened, so the wedge can no longer cost a run.**
+  A bound on every chat call and every stream chunk, a 120s bound on embeddings, a
+  per-item watchdog, `gather(return_exceptions=True)`, a JSONL sink written per item
+  with `--resume`, and `timeout-minutes` on both CI eval jobs. Details and the two
+  caveats that were not worked around: `docs/NOTES.md` (6.4, "The hardening, as
+  applied"). **The weakened-prompt result is still outstanding** — that is all 6.4
+  now needs.
+- **Eval host: an OpenAI-compatible gateway** (`LLM_API_BASE`/`LLM_API_KEY`) makes the
+  verify runnable on hosted models instead of an 85-minute CPU run. Note the Ollama
+  baseline does **not** transfer — the answer and judge models change — so 6.4 needs
+  two hosted runs, a fresh baseline and the weakened one.
 
 ---
 
