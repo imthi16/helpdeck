@@ -46,7 +46,11 @@ class OpenAIEmbeddingProvider:
         from openai import AsyncOpenAI
 
         # Explicit rather than the SDK's implicit 600s, so all three providers agree.
-        self._client = AsyncOpenAI(api_key=api_key, timeout=EMBEDDING_TIMEOUT_SECONDS)
+        # max_retries=0: the SDK's own retries (default 2) stack on
+        # EmbeddingService._embed_batch_with_retry and blow the item ceiling.
+        self._client = AsyncOpenAI(
+            api_key=api_key, timeout=EMBEDDING_TIMEOUT_SECONDS, max_retries=0
+        )
 
     async def embed(self, texts: list[str], model: str) -> list[list[float]]:
         response = await self._client.embeddings.create(model=model, input=texts)

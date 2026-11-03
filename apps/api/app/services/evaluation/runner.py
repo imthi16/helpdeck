@@ -11,12 +11,15 @@ node skips its write when state carries no conversation).
 """
 
 import asyncio
+import concurrent.futures
 import datetime as dt
+import hashlib
 import json
 import subprocess
+import threading
 import time
 import uuid
-from collections.abc import Sequence
+from collections.abc import Coroutine, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -30,7 +33,7 @@ from app.core.config import get_settings
 from app.core.db import unscoped_session_factory
 from app.core.logging import get_logger
 from app.models import Document, DocumentStatus, EvalRun, EvalRunKind, Organization
-from app.services.embeddings import EmbeddingService
+from app.services.embeddings import EMBEDDING_TIMEOUT_SECONDS, MAX_RETRIES, EmbeddingService
 from app.services.evaluation import metrics as m
 from app.services.evaluation.dataset import GoldenItem
 from app.services.evaluation.gate import GateResult, Threshold, evaluate_gate
@@ -42,6 +45,15 @@ logger = get_logger(__name__)
 
 DEFAULT_CONCURRENCY = 4
 REPORTS_DIR = Path(__file__).resolve().parents[5] / "eval" / "reports"
+# Happy-path chain for one answerable, non-refused item: router, streamed answer,
+# pipeline judge, faithfulness judge, relevancy judge. Each is already capped by
+# LLM_TIMEOUT_SECONDS, so the item ceiling has to be their sum or a slow-but-healthy
+# item is cancelled and dropped from the metrics.
+SEQUENTIAL_MODEL_CALLS = 5
+# Retrieval embeds the query; answer relevancy embeds the question plus regenerations.
+# Each attempt is capped by EMBEDDING_TIMEOUT_SECONDS, and the service retries.
+SEQUENTIAL_EMBED_CALLS = 2
+_FINGERPRINT_KEY = "_eval_fingerprint"
 
 
 class EvalSetupError(Exception):
@@ -96,8 +108,8 @@ class EvalReport:
     gate: dict[str, Any] | None = None
     #: Set when items were carried over from a previous run's JSONL sink. Both
     #: matter for reading the numbers: ``duration_ms`` then covers only the
-    #: continuation, and the reused items were scored by an earlier process —
-    #: possibly at a different ``git_sha``.
+    #: continuation. A sink from another org, dataset, model config, or checkout
+    #: is rejected — those rows are not scores for this run.
     resumed_from: str | None = None
     resumed_item_count: int = 0
 
@@ -179,6 +191,117 @@ def git_sha() -> str | None:
     except (OSError, subprocess.SubprocessError):
         return None
     return result.stdout.strip() or None if result.returncode == 0 else None
+
+
+def default_item_timeout() -> float:
+    """Item ceiling covering every sequential model and embedding call."""
+    return (
+        SEQUENTIAL_MODEL_CALLS * get_settings().llm_timeout_seconds
+        + SEQUENTIAL_EMBED_CALLS * EMBEDDING_TIMEOUT_SECONDS * (MAX_RETRIES + 1)
+    )
+
+
+def eval_fingerprint(
+    *,
+    org_id: uuid.UUID,
+    dataset: str,
+    subset: str,
+    items: Sequence[GoldenItem],
+    deps: AgentDependencies,
+    embedding_service: EmbeddingService,
+    item_timeout: float,
+    judge_route: LLMRoute = m.JUDGE_ROUTE,
+) -> dict[str, Any]:
+    """Identity of a run. Resume reuses rows only when this matches."""
+    payload = [
+        {
+            "id": item.id,
+            "question": item.question,
+            "ground_truth": item.ground_truth,
+            "expected_doc_ids": list(item.expected_doc_ids),
+            "answerable": item.answerable,
+        }
+        for item in items
+    ]
+    return {
+        "org_id": str(org_id),
+        "dataset": dataset,
+        "subset": subset,
+        "git_sha": git_sha(),
+        "items_sha256": hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest(),
+        "judge_route": judge_route.value,
+        "environment": environment_labels(
+            deps, judge_route, embedding_service, item_timeout=item_timeout
+        ),
+    }
+
+
+def reject_incompatible_resume(path: Path | None, fingerprint: dict[str, Any]) -> None:
+    """Refuse a sink scored under a different org, dataset, model config, or checkout."""
+    if path is None or not path.exists() or not path.stat().st_size:
+        return
+    if read_fingerprint(path) != fingerprint:
+        raise EvalSetupError(
+            f"resume sink {path} does not match this run (org, dataset, models, or checkout)"
+        )
+
+
+def write_fingerprint_header(handle: Any, sink: Path, fingerprint: dict[str, Any]) -> None:
+    if sink.stat().st_size == 0:
+        handle.write(json.dumps({_FINGERPRINT_KEY: fingerprint}, sort_keys=True) + "\n")
+        handle.flush()
+
+
+def read_fingerprint(path: Path) -> dict[str, Any] | None:
+    """Fingerprint header of a sink, or None when the file has no header."""
+    if not path.exists():
+        return None
+    for line in path.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            return None
+        if isinstance(payload, dict) and _FINGERPRINT_KEY in payload:
+            found = payload[_FINGERPRINT_KEY]
+            return found if isinstance(found, dict) else None
+        return None
+    return None
+
+
+def run_until_done(coro: Coroutine[Any, Any, Any]) -> Any:
+    """Like ``asyncio.run``, but a wedged executor thread cannot block shutdown.
+
+    Cancelling an await does not stop a request stuck in the default executor.
+    Those workers are daemons and the pool is shut down with ``wait=False``.
+    ponytail: patches ``Thread.__init__`` for the call because the pool starts
+    workers before the caller can set ``daemon``. A killable subprocess if a
+    provider stops using the default executor.
+    """
+    original_init = threading.Thread.__init__
+
+    def init(self, *args, **kwargs) -> None:
+        original_init(self, *args, **kwargs)
+        # Before start(); a live thread raises if daemon is set later.
+        if str(self.name).startswith("eval-call"):
+            self.daemon = True
+
+    executor = concurrent.futures.ThreadPoolExecutor(thread_name_prefix="eval-call")
+    loop = asyncio.new_event_loop()
+    threading.Thread.__init__ = init  # type: ignore[method-assign]
+    try:
+        asyncio.set_event_loop(loop)
+        loop.set_default_executor(executor)
+        return loop.run_until_complete(coro)
+    finally:
+        threading.Thread.__init__ = original_init  # type: ignore[method-assign]
+        try:
+            loop.run_until_complete(loop.shutdown_asyncgens())
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+            loop.close()
+            asyncio.set_event_loop(None)
 
 
 async def resolve_org(
@@ -421,12 +544,19 @@ async def run_eval(
     started_at = dt.datetime.now(dt.UTC)
     started = time.perf_counter()
     semaphore = asyncio.Semaphore(max(1, concurrency))
-    # A scored item makes at most three strong-route calls (streamed answer,
-    # faithfulness, answer_relevancy) plus two cheap ones, each already bounded by
-    # LLM_TIMEOUT_SECONDS. Their sum is the natural item bound — so this watchdog can
-    # only fire when that per-call bound has already failed to, which is its whole job.
-    resolved_item_timeout = (
-        item_timeout if item_timeout is not None else 3 * get_settings().llm_timeout_seconds
+    # Sum of the per-call ceilings, not a fraction of them. The watchdog is the
+    # backstop for a call whose own timeout already failed — it must not cancel a
+    # chain of calls that each finished inside LLM_TIMEOUT_SECONDS.
+    resolved_item_timeout = item_timeout if item_timeout is not None else default_item_timeout()
+    fingerprint = eval_fingerprint(
+        org_id=resolved_org,
+        dataset=dataset,
+        subset=subset,
+        items=items,
+        deps=deps,
+        embedding_service=embedding_service,
+        judge_route=judge_route,
+        item_timeout=resolved_item_timeout,
     )
 
     # Resolved before the gather, not after it as the report path used to be: the
@@ -434,6 +564,7 @@ async def run_eval(
     # survive a kill that never reaches the end of the run.
     target = report_path or default_report_path(started_at, subset)
     sink = sink_path_for(target) if target is not None else None
+    reject_incompatible_resume(resume_path, fingerprint)
     done = load_results(resume_path) if resume_path is not None else {}
     pending = [item for item in items if item.id not in done]
     if done:
@@ -445,6 +576,8 @@ async def run_eval(
     # in flight. No lock: one event loop, and there is no await between the write
     # and the flush.
     sink_handle = sink.open("a") if sink is not None else None
+    if sink_handle is not None and sink is not None:
+        write_fingerprint_header(sink_handle, sink, fingerprint)
 
     def record(result: EvalItemResult) -> None:
         if sink_handle is None:
@@ -531,7 +664,9 @@ async def run_eval(
         report.report_path = str(write_report(report, target))
         # Only once the report exists: a stale sink must never silently seed a later
         # run, and until this point it is the only record of the work.
-        if sink is not None:
+        # Keep the sink when any item failed: --resume reads only this file, and the
+        # CLI exits 1 after the report exists. A clean report is the whole record.
+        if sink is not None and counts["errors"] == 0:
             sink.unlink(missing_ok=True)
     # Exactly one insert, on the merged report. The killed run inserted none, so a
     # resumed run still yields one row — eval_runs is the record of a *finished*
@@ -599,8 +734,15 @@ def load_results(path: Path) -> dict[str, EvalItemResult]:
         if not line.strip():
             continue
         try:
-            result = EvalItemResult(**json.loads(line))
-        except (json.JSONDecodeError, TypeError) as exc:
+            payload = json.loads(line)
+        except json.JSONDecodeError as exc:
+            logger.warning("eval_sink_line_skipped", path=str(path), line=number, error=str(exc))
+            continue
+        if isinstance(payload, dict) and _FINGERPRINT_KEY in payload:
+            continue
+        try:
+            result = EvalItemResult(**payload)
+        except (TypeError, ValueError) as exc:
             logger.warning("eval_sink_line_skipped", path=str(path), line=number, error=str(exc))
             continue
         if result.error is None:

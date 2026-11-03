@@ -15,15 +15,16 @@ run that is killed part-way can be continued instead of restarted:
         --out ../../eval/reports/verify.json --resume ../../eval/reports/verify.jsonl
 
 Pass the same base name and it appends in place, idempotently — the last line for an
-id wins. Items that errored or timed out are re-run; only clean ones are reused. The
-sink is deleted once a complete report is written.
+id wins. Items that errored or timed out are re-run; only clean ones are reused.
+The sink's first line is a fingerprint (org, dataset, models, checkout); a mismatch
+is refused. The sink is deleted once a report with zero errors is written, and kept
+when any item failed so ``--resume`` can retry those rows.
 
 Do not pipe this through `tail`: it emits per-call progress lines and a pipe buffers
 them, so a healthy long run looks like a hang. Stream it, or `tee` it.
 """
 
 import argparse
-import asyncio
 import sys
 import uuid
 from pathlib import Path
@@ -45,8 +46,10 @@ from app.services.evaluation.metrics import JUDGE_ROUTE  # noqa: E402
 from app.services.evaluation.runner import (  # noqa: E402
     DEFAULT_CONCURRENCY,
     EvalSetupError,
+    default_item_timeout,
     format_summary,
     run_eval,
+    run_until_done,
     stub_providers,
 )
 from app.services.llm import LLMRoute  # noqa: E402
@@ -73,7 +76,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=float,
         default=None,
         help="seconds one item may take before it is recorded as an error "
-        "(default: 3 x LLM_TIMEOUT_SECONDS)",
+        f"(default: {default_item_timeout():.0f}s, one bound per model and embedding call)",
     )
     parser.add_argument(
         "--resume",
@@ -81,9 +84,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="a previous run's .jsonl sink; items already scored there are reused, "
         "errored and timed-out ones are re-run",
     )
-    parser.add_argument(
-        "--no-db", action="store_true", help="skip the eval_runs row (report only)"
-    )
+    parser.add_argument("--no-db", action="store_true", help="skip the eval_runs row (report only)")
     parser.add_argument(
         "--gate",
         action="store_true",
@@ -156,4 +157,4 @@ async def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(main()))
+    raise SystemExit(run_until_done(main()))

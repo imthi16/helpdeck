@@ -176,6 +176,28 @@ async def test_embedding_calls_carry_a_timeout(monkeypatch) -> None:
     assert fake.kwargs["timeout"] == EMBEDDING_TIMEOUT_SECONDS
 
 
+def test_openai_embedder_does_not_retry_inside_the_sdk(monkeypatch) -> None:
+    """The SDK retries timeouts on its own. Stacked on the service retry, one
+    wedged batch runs for about 24 minutes instead of the 8-minute ceiling."""
+    import sys
+    import types
+
+    from app.services.embeddings import EMBEDDING_TIMEOUT_SECONDS, OpenAIEmbeddingProvider
+
+    captured: dict = {}
+
+    class FakeClient:
+        def __init__(self, **kwargs) -> None:
+            captured.update(kwargs)
+
+    monkeypatch.setitem(sys.modules, "openai", types.SimpleNamespace(AsyncOpenAI=FakeClient))
+    OpenAIEmbeddingProvider("test-key")
+
+    assert captured["max_retries"] == 0
+    assert captured["timeout"] == EMBEDDING_TIMEOUT_SECONDS
+    assert captured["api_key"] == "test-key"
+
+
 def test_the_embedding_bound_stays_well_under_the_retry_budget() -> None:
     """It is deliberately not LLM_TIMEOUT_SECONDS: _embed_batch_with_retry retries
     any exception MAX_RETRIES times, so a 600s bound would cap a wedged batch at
